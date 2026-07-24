@@ -1,17 +1,12 @@
 """Backend API for the Europese Zoekmachine."""
 
-import os
-import sys
-from pathlib import Path
-
-# Voeg de project root toe aan het Python-pad VOORDAT lokale modules worden geïmporteerd.
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-sys.path.append(str(PROJECT_ROOT))
-
 import asyncio
 import hashlib
 import json
+import os
+import sys
 from contextlib import asynccontextmanager
+from pathlib import Path
 from urllib.parse import urljoin, urlparse
 from urllib.robotparser import RobotFileParser
 
@@ -23,6 +18,10 @@ from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
 from meilisearch_python_async import Client as AsyncMeiliClient
+
+# Voeg de project root toe aan het Python-pad VOORDAT lokale modules worden geïmporteerd.
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+sys.path.append(str(PROJECT_ROOT))
 
 from api.routes.generate_seo import router as seo_router
 
@@ -336,7 +335,9 @@ def _prepare_chat_history(history: str = None) -> list[dict]:
         is_valid_role = isinstance(msg, dict) and msg.get("role") in [
             "user", "assistant"
         ]
-        is_thinking_placeholder = msg.get("content") == "fajaedeAI+ is aan het denken..."
+        is_thinking_placeholder = (
+            msg.get("content") == "fajaedeAI+ is aan het denken..."
+        )
         if is_valid_role and not is_thinking_placeholder:
             chat_history.append({"role": msg["role"], "content": msg["content"]})
     return chat_history
