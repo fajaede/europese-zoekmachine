@@ -1,5 +1,6 @@
 """Backend API for the Europese Zoekmachine."""
 
+# Standaardbibliotheek
 import asyncio
 import hashlib
 import json
@@ -10,6 +11,7 @@ from pathlib import Path
 from urllib.parse import urljoin, urlparse
 from urllib.robotparser import RobotFileParser
 
+# Derde partijen
 import httpx
 import openai
 import redis.asyncio as redis
@@ -23,6 +25,7 @@ from meilisearch_python_async import Client as AsyncMeiliClient
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.append(str(PROJECT_ROOT))
 
+# Lokale applicatie
 from api.routes.generate_seo import router as seo_router
 
 
