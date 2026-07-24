@@ -1,1 +1,29 @@
-api/venv/
+# Dependency directories
+/node_modules/
+/.pnp
+.pnp.js
+
+# Python
+/.venv/
+/api/venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+
+# Build outputs
+/.next/
+/out/
+/build/
+/dist/
+
+# Local secrets and config
+*.env
+.env.*
+
+# Data stores - NOOIT committen!
+/ollama_data/
+/meili_data/

@@ -1,0 +1,8 @@
+fastapi
+uvicorn[standard]
+pydantic
+meilisearch
+redis
+openai
+beautifulsoup4
+httpx

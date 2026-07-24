@@ -1,0 +1,129 @@
+services:
+  # De Python/FastAPI backend
+  # Deze service verwacht een Dockerfile in een 'backend' map.
+  backend:
+    build:
+      # De context verwijst nu naar de map waar je backend Dockerfile staat.
+      context: ./backend
+    container_name: backend_api
+    restart: unless-stopped
+    ports:
+      - "18000:18000"
+    environment:
+      # Environment variabelen voor de backend
+      - MEILI_HOST=http://meilisearch:7700
+      - MEILI_MASTER_KEY=${MEILI_MASTER_KEY}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - OLLAMA_HOST=http://ollama:11434
+    # Healthcheck om te wachten tot de backend API echt bereikbaar is.
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:18000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - search-net
+    # Wacht tot alle afhankelijke services 'healthy' zijn.
+    depends_on:
+      meilisearch:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      ollama: # De AI fallback service
+        condition: service_healthy
+
+  # De Next.js frontend
+  frontend:
+    build:
+      context: ./frontend-next
+      args:
+        # Geef een build-time flag door. Dit voorkomt API calls tijdens de build.
+        # De sitemap wordt dan on-demand gegenereerd in productie.
+        - IS_DOCKER_BUILD=true
+        - NEXT_PUBLIC_API_URL=http://backend:18000
+    container_name: frontend_app
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      # De frontend praat met de backend via de service naam 'backend'
+      - NEXT_PUBLIC_API_URL=http://backend:18000
+    # Wacht tot de backend 'healthy' is voordat de frontend build start.
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - search-net
+
+  # MeiliSearch service
+  meilisearch:
+    image: getmeili/meilisearch:v1.8
+    container_name: meilisearch_service
+    ports:
+      - "7700:7700"
+    environment:
+      - MEILI_MASTER_KEY=${MEILI_MASTER_KEY}
+    volumes:
+      - ./meili_data:/meili_data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:7700/health"]
+      interval: 5s
+      timeout: 2s
+      retries: 20
+    networks:
+      - search-net
+
+  # Redis service
+  redis:
+    image: redis:7-alpine
+    container_name: redis_cache
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    command: redis-server --requirepass ${REDIS_PASSWORD}
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 5s
+      timeout: 2s
+      retries: 20
+    networks:
+      - search-net
+  
+  # Ollama service voor lokale AI-modellen (fallback)
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama_service
+    ports:
+      - "11434:11434"
+    volumes:
+      - ./ollama_data:/root/.ollama
+    networks:
+      - search-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "ollama ps"]
+      interval: 30s
+      timeout: 10s
+      retries: 20
+      start_period: 1200s
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+
+
+networks:
+  search-net:
+    driver: bridge
+
+volumes:
+  meili_data:
+  ollama_data:

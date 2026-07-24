@@ -1,23 +1,17 @@
 """API routes for the website builder functionality."""
 
 import logging
-from typing import Dict, Any
-
-from enum import Enum
+from typing import Dict, Any, Literal
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field  # pylint: disable=no-name-in-module
 
-from api.dependencies import get_website_generator
-from api.llm_client import LLMClientError
-from api.services.website_generator import WebsiteGeneratorService
-
-from api.presets import STYLE_PRESETS
+# Use absolute imports from the 'api' root for better clarity and linter compatibility.
+from api.routes.dependencies import get_website_generator
+from api.routes.llm_client import LLMClientError
+from api.routes.website_generator import WebsiteGeneratorService
 
 router = APIRouter(tags=["builder"])
 logger = logging.getLogger(__name__)
-
-# Create a static Enum from the available style presets for robust validation
-StyleVariantEnum = Enum("StyleVariantEnum", {key: key for key in STYLE_PRESETS})
 
 class BuilderRequest(BaseModel):
     """Request model for the website builder."""
@@ -26,7 +20,7 @@ class BuilderRequest(BaseModel):
         min_length=10,
         description="A description of the business or website.",
     )
-    styleVariant: StyleVariantEnum = Field(
+    styleVariant: Literal["seo_ai_product", "minimal"] = Field(
         default="seo_ai_product",
         description="The visual style variant for the website."
     )
