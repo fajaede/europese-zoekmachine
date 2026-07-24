@@ -4,7 +4,10 @@ import os
 import sys
 from pathlib import Path
 
-import time
+# Voeg de project root toe aan het Python-pad VOORDAT lokale modules worden geïmporteerd.
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+sys.path.append(str(PROJECT_ROOT))
+
 import asyncio
 import hashlib
 import json
@@ -12,17 +15,15 @@ from contextlib import asynccontextmanager
 from urllib.parse import urljoin, urlparse
 from urllib.robotparser import RobotFileParser
 
-from meilisearch_python_async import Client as AsyncMeiliClient
+import httpx
 import openai
 import redis.asyncio as redis
-import httpx
-from fastapi.responses import RedirectResponse
-from fastapi.middleware.cors import CORSMiddleware
 from bs4 import BeautifulSoup
+from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import RedirectResponse
+from meilisearch_python_async import Client as AsyncMeiliClient
 
-# Voeg de project root toe aan het Python-pad om imports vanuit de `api` map mogelijk te maken.
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-sys.path.append(str(PROJECT_ROOT))
 from api.routes.generate_seo import router as seo_router
 
 
@@ -89,17 +90,19 @@ app = FastAPI(
 
 # CORS Middleware: Sta verzoeken toe van je Vercel frontend.
 # In productie wil je dit beperken tot je daadwerkelijke domein.
-origins = [
-    "http://localhost:3000",  # Voor lokale ontwikkeling
-    "https://fajaede.eu",     # Je productiedomein
-    # Vercel preview URLs hebben een specifiek patroon.
-    # Dit staat alle preview deployments toe.
-    "https://fajaede-search-frontend-*.vercel.app",
-]
+# Lees toegestane origins uit een omgevingsvariabele voor flexibiliteit.
+# Voorbeeld: "http://localhost:3000,https://fajaede.eu"
+allowed_origins_str = os.getenv("CORS_ALLOWED_ORIGINS", "http://localhost:3000")
+origins = [origin.strip() for origin in allowed_origins_str.split(",")]
+
+# Vercel preview URLs hebben een specifiek patroon.
+# We gebruiken een regex om alle preview-deployments veilig toe te staan.
+VERCEL_PREVIEW_REGEX = r"https://fajaede-search-frontend-.*-fajaede\.vercel\.app"
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
+    allow_origin_regex=VERCEL_PREVIEW_REGEX,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -133,19 +136,16 @@ async def search(request: Request, q: str):
     try:
         search_results = await request.app.state.meili_index.search(q, {"limit": limit})
         return {"results": search_results["hits"]}
-    except Exception as e: # Using a generic exception as the async library might have different error types
-        print(f"Error connecting to MeiliSearch: {e}")
-        raise HTTPException(
-            status_code=503, detail="Zoekservice is momenteel niet beschikbaar."
-        ) from e
-    except Exception as e:
+    except Exception as e:  # Vang alle exceptions
         # Vang de "index_not_found" fout af. Dit kan variëren in de async lib.
         if "index_not_found" in str(e):
             print("Index 'documents' nog niet gevonden. Geef een lege lijst terug.")
             return {"results": []}
-        # Voor andere Meilisearch API-fouten, gooi een exceptie.
+
+        # Voor alle andere fouten, behandel ze als een service-onbeschikbaarheid
+        print(f"Error connecting to MeiliSearch: {e}")
         raise HTTPException(
-            status_code=500, detail=f"Fout bij het doorzoeken van de index: {e.message}"
+            status_code=503, detail="Zoekservice is momenteel niet beschikbaar."
         ) from e
 
 
@@ -190,7 +190,7 @@ class Crawler:  # pylint: disable=too-few-public-methods
             try:
                 rp.read()
                 self.robot_parsers[domain] = rp
-            except (requests.RequestException, ValueError, TypeError) as e:
+            except (httpx.RequestError, ValueError, TypeError) as e:
                 print(f"Kon robots.txt niet lezen voor {domain}: {e}")
                 # Maak een lege parser aan om door te gaan bij een fout
                 self.robot_parsers[domain] = RobotFileParser()
@@ -321,23 +321,33 @@ async def start_crawl(request: Request, url: str, background_tasks: BackgroundTa
         raise HTTPException(status_code=503, detail=str(e)) from e
 
 
+def _prepare_chat_history(history: str = None) -> list[dict]:
+    """Helper om de JSON history string te parsen en op te schonen."""
+    if not history:
+        return []
+
+    try:
+        raw_history = json.loads(history)
+    except json.JSONDecodeError:
+        return []
+
+    chat_history = []
+    for msg in raw_history:
+        is_valid_role = isinstance(msg, dict) and msg.get("role") in [
+            "user", "assistant"
+        ]
+        is_thinking_placeholder = msg.get("content") == "fajaedeAI+ is aan het denken..."
+        if is_valid_role and not is_thinking_placeholder:
+            chat_history.append({"role": msg["role"], "content": msg["content"]})
+    return chat_history
+
+
 @app.get("/api/summarize")
-async def summarize(request: Request, q: str, history: str = None):
-    """Genereert een AI-samenvatting op basis van zoekresultaten."""
+async def summarize(request: Request, q: str, chat_history: list[dict] = Depends(_prepare_chat_history)):
+    """Genereert een AI-samenvatting op basis van zoekresultaten en conversatiegeschiedenis."""
     try:
         if not q:
             return {"ai": "Stel een vraag om een AI-samenvatting te krijgen."}
-
-        # Parse de history string als deze is meegegeven
-        raw_history = json.loads(history) if history else []
-        # Filter de geschiedenis: behoud alleen 'user' en 'assistant' rollen
-        # en verwijder de "denk"-placeholder.
-        chat_history = []
-        for msg in raw_history:
-            is_valid_role = msg.get("role") in ["user", "assistant"]
-            is_thinking = msg.get("content") == "fajaedeAI+ is aan het denken..."
-            if is_valid_role and not is_thinking:
-                chat_history.append(msg)
 
         # 1. Haal context op via de zoekfunctie
         try:
