@@ -1,6 +1,9 @@
 """Backend API for the Europese Zoekmachine."""
 
 import os
+import sys
+from pathlib import Path
+
 import time
 import asyncio
 import hashlib
@@ -14,7 +17,13 @@ import openai
 import redis.asyncio as redis
 import httpx
 from fastapi.responses import RedirectResponse
+from fastapi.middleware.cors import CORSMiddleware
 from bs4 import BeautifulSoup
+
+# Voeg de project root toe aan het Python-pad om imports vanuit de `api` map mogelijk te maken.
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+sys.path.append(str(PROJECT_ROOT))
+from api.routes.generate_seo import router as seo_router
 
 
 @asynccontextmanager
@@ -78,6 +87,26 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# CORS Middleware: Sta verzoeken toe van je Vercel frontend.
+# In productie wil je dit beperken tot je daadwerkelijke domein.
+origins = [
+    "http://localhost:3000",  # Voor lokale ontwikkeling
+    "https://fajaede.eu",     # Je productiedomein
+    # Vercel preview URLs hebben een specifiek patroon.
+    # Dit staat alle preview deployments toe.
+    "https://fajaede-search-frontend-*.vercel.app",
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Integreer de SEO-generator route
+app.include_router(seo_router)
 
 @app.get("/")
 def read_root():
