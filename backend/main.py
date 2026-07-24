@@ -9,7 +9,7 @@ from contextlib import asynccontextmanager
 from urllib.parse import urljoin, urlparse
 from urllib.robotparser import RobotFileParser
 
-import meilisearch
+from meilisearch_python_async import Client as AsyncMeiliClient
 import openai
 import redis.asyncio as redis
 import httpx
@@ -39,10 +39,10 @@ async def lifespan(fastapi_app: FastAPI):
         fastapi_app.state.redis_client = None
 
     # Initialiseer de MeiliSearch client en maak deze beschikbaar in de app state
-    fastapi_app.state.meili_client = meilisearch.Client(
+    fastapi_app.state.meili_client = AsyncMeiliClient(
         url=meili_host, api_key=meili_master_key
     )
-    fastapi_app.state.meili_index = fastapi_app.state.meili_client.index("documents")
+    fastapi_app.state.meili_index = fastapi_app.state.meili_client.get_index("documents")
     print("MeiliSearch client geïnitialiseerd.")
 
     # Initialiseer de OpenAI client alleen als er een API key is
@@ -102,16 +102,16 @@ async def search(request: Request, q: str):
     limit = 1000 if request.headers.get("X-Sitemap-Request") else 10
 
     try:
-        search_results = request.app.state.meili_index.search(q, {"limit": limit})
+        search_results = await request.app.state.meili_index.search(q, {"limit": limit})
         return {"results": search_results["hits"]}
-    except meilisearch.errors.MeilisearchCommunicationError as e:
+    except Exception as e: # Using a generic exception as the async library might have different error types
         print(f"Error connecting to MeiliSearch: {e}")
         raise HTTPException(
             status_code=503, detail="Zoekservice is momenteel niet beschikbaar."
         ) from e
-    except meilisearch.errors.MeilisearchApiError as e:
-        # Vang de "index_not_found" fout af die je eerder zag.
-        if e.code == "index_not_found":
+    except Exception as e:
+        # Vang de "index_not_found" fout af. Dit kan variëren in de async lib.
+        if "index_not_found" in str(e):
             print("Index 'documents' nog niet gevonden. Geef een lege lijst terug.")
             return {"results": []}
         # Voor andere Meilisearch API-fouten, gooi een exceptie.
@@ -123,11 +123,11 @@ async def search(request: Request, q: str):
 class Crawler:  # pylint: disable=too-few-public-methods
     """Een webcrawler die regels respecteert en content indexeert in Meilisearch."""
 
-    def __init__(self, meili_client: meilisearch.Client, redis_client):
+    def __init__(self, meili_client: AsyncMeiliClient, redis_client):
         if not redis_client:
             raise ValueError("Redis client is niet beschikbaar voor de crawler.")
         self.redis = redis_client
-        self.meili_index = meili_client.index("documents")
+        self.meili_index = meili_client.get_index("documents")
         # Gebruik een standaard browser User-Agent om 403 Forbidden-fouten te voorkomen.
         # Veel websites blokkeren onbekende of custom bot User-Agents.
         # De volgorde van headers kan ook van belang zijn voor botdetectie.
@@ -238,7 +238,7 @@ class Crawler:  # pylint: disable=too-few-public-methods
                 "content": content,
             }
 
-            self.meili_index.add_documents([document])
+            await self.meili_index.add_documents([document])
             print(f"Geïndexeerd: {url}")
 
             # Voeg nieuwe links toe aan de wachtrij
@@ -312,7 +312,7 @@ async def summarize(request: Request, q: str, history: str = None):
 
         # 1. Haal context op via de zoekfunctie
         try:
-            search_results = request.app.state.meili_index.search(q, {'limit': 5})
+            search_results = await request.app.state.meili_index.search(q, {'limit': 5})
             context_hits = search_results.get("hits", [])
             context_parts = []
             for i, hit in enumerate(context_hits):
@@ -325,10 +325,7 @@ async def summarize(request: Request, q: str, history: str = None):
                 "algemene kennis, maar vermeld dat er geen specifieke resultaten "
                 "in de zoekindex beschikbaar zijn."
             )
-        except (
-            meilisearch.errors.MeilisearchApiError,
-            meilisearch.errors.MeilisearchCommunicationError,
-        ) as e:
+        except Exception as e:
             print(f"Fout bij ophalen context van MeiliSearch: {e}")
             detail_message = (
                 "Kon geen zoekresultaten ophalen voor de AI-samenvatting."
