@@ -27,3 +27,6 @@ venv/
 # Data stores - NOOIT committen!
 /ollama_data/
 /meili_data/
+
+# Root-level package manager files
+/package-lock.json
