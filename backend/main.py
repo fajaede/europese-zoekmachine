@@ -1,31 +1,32 @@
 """Backend API for the Europese Zoekmachine."""
 
-# Standaardbibliotheek
+# Standard library imports
+import os
+import json
 import asyncio
 import hashlib
-import json
-import os
-import sys
 from contextlib import asynccontextmanager
-from pathlib import Path
 from urllib.parse import urljoin, urlparse
 from urllib.robotparser import RobotFileParser
 
-# Derde partijen
+# Third‑party imports
 import httpx
 import openai
 import redis.asyncio as redis
 from bs4 import BeautifulSoup
-from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request
+from fastapi import (
+    Depends,
+    FastAPI,
+    Request,
+    HTTPException,
+    BackgroundTasks,
+)
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
 from meilisearch_python_async import Client as AsyncMeiliClient
 
-# Voeg de project root toe aan het Python-pad VOORDAT lokale modules worden geïmporteerd.
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-sys.path.append(str(PROJECT_ROOT))
-
-# Lokale applicatie
+# Project root path manipulation
+# Local application imports
 from api.routes.generate_seo import router as seo_router
 
 
@@ -165,8 +166,8 @@ class Crawler:  # pylint: disable=too-few-public-methods
         headers = {
             "User-Agent": (
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/127.0.0.0 Safari/537.36" # Kleine versie-update
+                "AppleWebKit/537.36 "
+                "Chrome/127.0.0.0"
             ),
             "Accept": (
                 "text/html,application/xhtml+xml,application/xml;q=0.9,"
@@ -209,7 +210,7 @@ class Crawler:  # pylint: disable=too-few-public-methods
         self.content_hashes.add(content_hash)
         return False
 
-    async def _process_page(self, url: str):
+    async def _process_page(self, url: str):  # pylint: disable=too-many-locals
         """Verwerkt een enkele pagina: downloaden, parsen, valideren en indexeren."""
         if await self.redis.sismember("crawler:visited_urls", url):
             return
@@ -346,113 +347,122 @@ def _prepare_chat_history(history: str = None) -> list[dict]:
     return chat_history
 
 
-@app.get("/api/summarize")
-async def summarize(request: Request, q: str, chat_history: list[dict] = Depends(_prepare_chat_history)):
-    """Genereert een AI-samenvatting op basis van zoekresultaten en conversatiegeschiedenis."""
+async def _fetch_context(request: Request, q: str) -> str:
+    """Haal tot maximaal vijf zoekresultaten op en formatteer ze als context."""
     try:
-        if not q:
-            return {"ai": "Stel een vraag om een AI-samenvatting te krijgen."}
-
-        # 1. Haal context op via de zoekfunctie
-        try:
-            search_results = await request.app.state.meili_index.search(q, {'limit': 5})
-            context_hits = search_results.get("hits", [])
-            context_parts = []
-            for i, hit in enumerate(context_hits):
-                title = hit.get('title', '')
-                summary = hit.get('summary', hit.get('content', ''))[:300]
-                context_parts.append(f"Bron {i+1}: {title}\n{summary}")
-
-            context = "\n\n".join(context_parts) if context_parts else (
-                "Geen zoekresultaten gevonden. Beantwoord de vraag op basis van "
-                "algemene kennis, maar vermeld dat er geen specifieke resultaten "
-                "in de zoekindex beschikbaar zijn."
-            )
-        except Exception as e:
-            print(f"Fout bij ophalen context van MeiliSearch: {e}")
-            detail_message = (
-                "Kon geen zoekresultaten ophalen voor de AI-samenvatting."
-            )
-            raise HTTPException(status_code=503, detail=detail_message) from e
-
-        # 2. Bouw de prompt
-        system_prompt = (
-            "Je bent een AI-assistent die vragen beantwoordt op basis van "
-            "genummerde zoekresultaten. "
-            "Jouw taak is om de vraag van de gebruiker te beantwoorden door "
-            "de verstrekte context samen "
-            "te vatten. Houd je aan de volgende regels:\n"
-            "1. Baseer je antwoord UITSLUITEND op de informatie in de 'Context'. "
-            "Verzin geen informatie.\n"
-            "2. Als de context geen antwoord bevat, zeg dan: 'De zoekresultaten "
-            "bevatten onvoldoende informatie om deze vraag te beantwoorden.'\n"
-            "3. Structureer je antwoord als een FAQ of How-To als de context dit toelaat. "
-            "Gebruik Markdown voor de opmaak (bijv. met `#` voor titels en `*` of `1.` "
-            "voor lijsten).\n"
-            "4. Voeg aan het einde van ELKE zin een citaat toe met de nummers van de bronnen "
-            "die je voor die zin hebt gebruikt. Bijvoorbeeld: 'Dit is een feit. [1, 3] "
-            "Een ander feit. [2]'\n"
-            "5. Combineer citaten als meerdere bronnen één zin ondersteunen. "
-            "Bijvoorbeeld: [1, 2].\n"
-            "6. Schrijf in een heldere, feitelijke en neutrale toon.\n"
-            "7. Antwoord altijd in de taal van de vraag van de gebruiker."
+        search_results = await request.app.state.meili_index.search(q, {"limit": 5})
+        hits = search_results.get("hits", [])
+        parts: list[str] = []
+        for i, hit in enumerate(hits):
+            title = hit.get("title", "")
+            summary = hit.get("summary", hit.get("content", ""))[:300]
+            parts.append(f"Bron {i+1}: {title}\n{summary}")
+        return "\n\n".join(parts) if parts else (
+            "Geen zoekresultaten gevonden. Beantwoord de vraag op basis van "
+            "algemene kennis, maar vermeld dat er geen specifieke resultaten "
+            "in de zoekindex beschikbaar zijn."
         )
-        user_prompt = (
-            f"Context:\n---\n{context}\n---\n\n"
-            f"Beantwoord de volgende vraag op basis van bovenstaande context:\n{q}"
-        )
-
-        # Voeg de bestaande conversatiegeschiedenis toe aan de messages voor de LLM
-        messages = [{"role": "system", "content": system_prompt}]
-        messages.extend(chat_history)
-        messages.append({"role": "user", "content": user_prompt})
-
-        # 3. Probeer OpenAI, indien geconfigureerd
-        try:
-            if hasattr(request.app.state, "openai_client"):
-                print("Poging tot OpenAI API aanroep...")
-                client = request.app.state.openai_client
-                chat_completion = await (
-                    client.chat.completions.create(
-                        messages=messages,
-                        model="gpt-3.5-turbo",
-                        temperature=0.3,
-                    )
-                )
-                response = chat_completion.choices[0].message.content
-                print("Antwoord succesvol gegenereerd door OpenAI.")
-                return {"ai": response}
-            # Als OpenAI niet is geconfigureerd, wordt dit overgeslagen
-# en gaan we direct naar de fallback.
-            raise openai.APIError(
-                "OpenAI client niet geconfigureerd.",
-                request=None,
-                body=None,
-            )
-        except openai.APIError as e:
-            print(f"OpenAI API call mislukt: {e}. Fallback naar lokaal model.")
-            if hasattr(request.app.state, "ollama_host"):
-                try:
-                    print("Poging tot Ollama (phi3:mini) fallback...")
-                    async with openai.AsyncOpenAI(
-                        base_url=f"{request.app.state.ollama_host}/v1", api_key="ollama"
-                    ) as client:
-                        chat_completion = await client.chat.completions.create(
-                            model="phi3:mini", messages=messages
-                        )
-                        response = chat_completion.choices[0].message.content
-                        print("Antwoord succesvol gegenereerd door Ollama (phi3:mini).")
-                        return {"ai": response}
-                except openai.APIError as ollama_error:
-                    print(f"Ollama fallback ook mislukt: {ollama_error}")
-        raise HTTPException(
-            status_code=503, detail="AI-diensten zijn momenteel niet beschikbaar."
-        )
-
     except Exception as e:
-        # Vang alle onverwachte fouten af die hierboven niet zijn gespecificeerd
-        print(f"Onverwachte fout in summarize endpoint: {type(e).__name__}: {e}")
+        print(f"Fout bij ophalen context van MeiliSearch: {e}")
         raise HTTPException(
             status_code=503,
-            detail="Er is een onverwachte fout opgetreden bij het genereren van het antwoord.",
+            detail="Kon geen zoekresultaten ophalen voor de AI‑samenvatting.",
+        ) from e
+
+
+def _build_system_prompt() -> str:
+    """Return the static system prompt used for AI‑samenvatting."""
+    part1 = ("Je bent een AI-assistent die vragen beantwoordt op basis van "
+             "genummerde zoekresultaten. Jouw taak is om de vraag van de "
+             "gebruiker te beantwoorden door de verstrekte context samen te vatten. "
+             "Houd je aan de volgende regels:\n")
+    part2 = (
+        "1. Baseer je antwoord UITSLUITEND op de informatie in de 'Context'. "
+        "Verzin geen informatie.\n"
+        "2. Als de context geen antwoord bevat, zeg dan: 'De zoekresultaten "
+        "bevatten onvoldoende informatie om deze vraag te beantwoorden.'\n"
+    )
+    part3 = ("3. Structureer je antwoord als een FAQ of How‑To als de context dit toelaat. Gebruik Markdown.\n"
+             "4. Voeg aan het einde van ELKE zin een citaat toe met de bronnummers. "
+             "Bijvoorbeeld: 'Dit is een feit. [1, 3]'\n")
+    part4 = ("5. Combineer citaten. Bijvoorbeeld: [1, 2].\n"
+             "6. Schrijf in een heldere, feitelijke en neutrale toon.\n"
+             "7. Antwoord altijd in de taal van de vraag van de gebruiker.")
+    return part1 + part2 + part3 + part4
+
+
+def _build_user_prompt(context: str, q: str) -> str:
+    """Compose the user prompt incorporating context and question."""
+    return (
+        f"Context:\n---\n{context}\n---\n\n"
+        f"Beantwoord de volgende vraag op basis van bovenstaande context:\n{q}"
+    )
+
+
+@app.get("/api/summarize")
+async def summarize(
+    request: Request,
+    q: str,
+    chat_history: list[dict] = Depends(_prepare_chat_history),
+) -> dict:
+    """Genereert een AI‑samenvatting op basis van zoekresultaten en conversatiegeschiedenis.
+
+    De logica is opgesplitst in kleinere helpers om Pylint‑regels
+    C0301 (lijn te lang) en R0914 (te veel locale variabelen) te vermijden.
+    """
+    if not q:
+        return {"ai": "Stel een vraag om een AI‑samenvatting te krijgen."}
+
+    # 1. Context ophalen via MeiliSearch
+    context = await _fetch_context(request, q)
+
+    # 2. Prompt‑delen samenstellen
+    system_prompt = _build_system_prompt()
+    user_prompt = _build_user_prompt(context, q)
+
+    # 3. LLM‑aanroep (OpenAI → Ollama fallback)
+    response = await _call_llm(request, system_prompt, user_prompt, chat_history)
+    return {"ai": response}
+
+
+async def _call_llm(
+    request: Request,
+    system_prompt: str,
+    user_prompt: str,
+    chat_history: list[dict],
+) -> str:
+    """Attempt OpenAI call, fallback to Ollama, raise on failure."""
+    messages = [{"role": "system", "content": system_prompt}]
+    messages.extend(chat_history)
+    messages.append({"role": "user", "content": user_prompt})
+    try:
+        if hasattr(request.app.state, "openai_client"):
+            client = request.app.state.openai_client
+            chat_completion = await (
+                client.chat.completions.create(
+                    messages=messages,
+                    model="gpt-3.5-turbo",
+                    temperature=0.3,
+                )
+            )
+            return chat_completion.choices[0].message.content
+        raise openai.APIError(
+            "OpenAI client niet geconfigureerd.", request=None, body=None
+        )
+    except openai.APIError as e:
+        print(f"OpenAI API call mislukt: {e}. Fallback naar lokaal model.")
+        if hasattr(request.app.state, "ollama_host"):
+            try:
+                async with openai.AsyncOpenAI(
+                    base_url=f"{request.app.state.ollama_host}/v1",
+                    api_key="ollama",
+                ) as client:
+                    chat_completion = await client.chat.completions.create(
+                        model="phi3:mini", messages=messages
+                    )
+                    return chat_completion.choices[0].message.content
+            except openai.APIError as ollama_error:
+                print(f"Ollama fallback ook mislukt: {ollama_error}")
+        raise HTTPException(
+            status_code=503, detail="AI‑diensten zijn momenteel niet beschikbaar."
         ) from e
