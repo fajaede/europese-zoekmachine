@@ -25,7 +25,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
 from meilisearch_python_async import Client as AsyncMeiliClient
 
-# Project root path manipulation
 # Local application imports
 from api.routes.generate_seo import router as seo_router
 
@@ -339,9 +338,8 @@ def _prepare_chat_history(history: str = None) -> list[dict]:
         is_valid_role = isinstance(msg, dict) and msg.get("role") in [
             "user", "assistant"
         ]
-        is_thinking_placeholder = (
-            msg.get("content") == "fajaedeAI+ is aan het denken..."
-        )
+        is_thinking_placeholder = (msg.get("content") ==
+                                 "fajaedeAI+ is aan het denken...")
         if is_valid_role and not is_thinking_placeholder:
             chat_history.append({"role": msg["role"], "content": msg["content"]})
     return chat_history
@@ -357,11 +355,11 @@ async def _fetch_context(request: Request, q: str) -> str:
             title = hit.get("title", "")
             summary = hit.get("summary", hit.get("content", ""))[:300]
             parts.append(f"Bron {i+1}: {title}\n{summary}")
-        return "\n\n".join(parts) if parts else (
-            "Geen zoekresultaten gevonden. Beantwoord de vraag op basis van "
-            "algemene kennis, maar vermeld dat er geen specifieke resultaten "
-            "in de zoekindex beschikbaar zijn."
-        )
+        if not parts:
+            return ("Geen zoekresultaten gevonden. Beantwoord de vraag op basis van "
+                    "algemene kennis, maar vermeld dat er geen specifieke resultaten "
+                    "in de zoekindex beschikbaar zijn.")
+        return "\n\n".join(parts)
     except Exception as e:
         print(f"Fout bij ophalen context van MeiliSearch: {e}")
         raise HTTPException(
@@ -378,13 +376,13 @@ def _build_system_prompt() -> str:
              "Houd je aan de volgende regels:\n")
     part2 = (
         "1. Baseer je antwoord UITSLUITEND op de informatie in de 'Context'. "
-        "Verzin geen informatie.\n"
-        "2. Als de context geen antwoord bevat, zeg dan: 'De zoekresultaten "
-        "bevatten onvoldoende informatie om deze vraag te beantwoorden.'\n"
+        "Verzin geen informatie.\n" "2. Als de context geen antwoord bevat, zeg dan: "
+        "'De zoekresultaten bevatten onvoldoende informatie om deze vraag te "
+        "beantwoorden.'\n"
     )
-    part3 = ("3. Structureer je antwoord als een FAQ of How‑To als de context dit toelaat. Gebruik Markdown.\n"
-             "4. Voeg aan het einde van ELKE zin een citaat toe met de bronnummers. "
-             "Bijvoorbeeld: 'Dit is een feit. [1, 3]'\n")
+    part3 = ("3. Structureer je antwoord als een FAQ of How‑To als de context dit "
+             "toelaat. Gebruik Markdown.\n" "4. Voeg aan het einde van ELKE zin een "
+             "citaat toe met de bronnummers. Bijvoorbeeld: 'Dit is een feit. [1, 3]'\n")
     part4 = ("5. Combineer citaten. Bijvoorbeeld: [1, 2].\n"
              "6. Schrijf in een heldere, feitelijke en neutrale toon.\n"
              "7. Antwoord altijd in de taal van de vraag van de gebruiker.")
