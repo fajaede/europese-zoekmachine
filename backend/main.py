@@ -198,15 +198,16 @@ class Crawler:  # pylint: disable=too-few-public-methods
                 self.robot_parsers[domain] = RobotFileParser()
         return self.robot_parsers[domain]
 
-    def _is_duplicate(self, soup: BeautifulSoup) -> bool:
+    async def _is_duplicate(self, soup: BeautifulSoup) -> bool:
         """Controleert op dubbele content via content hashing."""
         text_content = soup.get_text(separator=" ", strip=True)
         if not text_content:
             return True
         content_hash = hashlib.sha256(text_content.encode("utf-8")).hexdigest()
-        if content_hash in self.content_hashes:
+        # Gebruik Redis om hashes over sessies heen te onthouden
+        if await self.redis.sismember("crawler:content_hashes", content_hash):
             return True
-        self.content_hashes.add(content_hash)
+        await self.redis.sadd("crawler:content_hashes", content_hash)
         return False
 
     async def _process_page(self, url: str):  # pylint: disable=too-many-locals
@@ -245,7 +246,7 @@ class Crawler:  # pylint: disable=too-few-public-methods
                 return
 
             # Regel: Controleer op dubbele content
-            if self._is_duplicate(soup):
+            if await self._is_duplicate(soup):
                 print(f"Overgeslagen (dubbele content): {url}")
                 return
 
