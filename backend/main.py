@@ -317,10 +317,8 @@ class Crawler:  # pylint: disable=too-few-public-methods
 @app.post("/api/crawl")
 async def start_crawl(request: Request, url: str, background_tasks: BackgroundTasks):
     """Endpoint om een nieuwe crawl-taak te starten op de achtergrond."""
-    try: # No change needed, already correct
-        crawler = Crawler(
-            request.app.state.meili_index, request.app.state.redis_client
-        )
+    try:
+        crawler = Crawler(request.app.state.meili_index, request.app.state.redis_client)
         background_tasks.add_task(crawler.run, url)
         return {"message": f"Crawl-taak voor {url} is gestart op de achtergrond."}
     except ValueError as e:
