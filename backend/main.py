@@ -23,7 +23,10 @@ from fastapi import (
 )
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
-from meilisearch_python_async import Client as AsyncMeiliClient
+from meilisearch_python_async import (
+    Client as AsyncMeiliClient,
+    errors as meili_errors,
+)
 from dotenv import load_dotenv
 
 # Local application imports
@@ -50,16 +53,27 @@ async def lifespan(fastapi_app: FastAPI):
     # Veiligheidsmaatregel: Vereis een Redis-wachtwoord.
     if not redis_password:
         print(
-            "KRITISCH: REDIS_PASSWORD is niet ingesteld. Redis-client wordt niet geïnitialiseerd."
+            "KRITISCH: REDIS_PASSWORD is niet ingesteld. "
+            "Redis-client wordt niet geïnitialiseerd."
         )
         fastapi_app.state.redis_client = None
 
-    # Initialiseer de MeiliSearch client en maak deze beschikbaar in de app state
-    fastapi_app.state.meili_client = AsyncMeiliClient(
-        url=meili_host, api_key=meili_master_key
-    )
-    fastapi_app.state.meili_index = await fastapi_app.state.meili_client.get_index("documents")
-    print("MeiliSearch client geïnitialiseerd.")
+    # Initialiseer de MeiliSearch client en maak deze beschikbaar in de app state.
+    # Voeg een try-except‑blok toe om opstartcrashes te voorkomen
+    # wanneer MeiliSearch niet direct beschikbaar is.
+    try:
+        fastapi_app.state.meili_client = AsyncMeiliClient(
+            url=meili_host,
+            api_key=meili_master_key,
+        )
+        client = fastapi_app.state.meili_client
+        fastapi_app.state.meili_index = await client.get_index("documents")
+        print("MeiliSearch client geïnitialiseerd.")
+    except (
+        meili_errors.MeilisearchCommunicationError, httpx.ConnectError
+    ) as e:
+        print(f"KRITISCH: Kon niet initialiseren of verbinden met MeiliSearch: {e}")
+        fastapi_app.state.meili_client = None
 
     # Initialiseer de OpenAI client alleen als er een API key is
     if fastapi_app.state.openai_api_key:
@@ -72,8 +86,10 @@ async def lifespan(fastapi_app: FastAPI):
     if redis_password:
         try:
             fastapi_app.state.redis_client = redis.Redis(
-                host=redis_host, port=redis_port, password=redis_password,
-                decode_responses=True
+                host=redis_host,
+                port=redis_port,
+                password=redis_password,
+                decode_responses=True,
             )
             await fastapi_app.state.redis_client.ping()
             print("Redis client geïnitialiseerd en verbonden.")
@@ -168,9 +184,8 @@ class Crawler:  # pylint: disable=too-few-public-methods
         # De volgorde van headers kan ook van belang zijn voor botdetectie.
         headers = {
             "User-Agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 "
-                "Chrome/127.0.0.0"
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36"
             ),
             "Accept": (
                 "text/html,application/xhtml+xml,application/xml;q=0.9,"
