@@ -6,3 +6,4 @@ redis
 openai
 beautifulsoup4
 httpx
+gunicorn
