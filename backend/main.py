@@ -50,13 +50,26 @@ async def lifespan(fastapi_app: FastAPI):
     redis_port = int(os.getenv("REDIS_PORT", "6379")) # No change needed, already correct
     redis_password = os.getenv("REDIS_PASSWORD")
 
-    # Veiligheidsmaatregel: Vereis een Redis-wachtwoord.
+    # Initialiseer Redis client eerst, omdat andere delen ervan afhankelijk zijn.
     if not redis_password:
         print(
             "KRITISCH: REDIS_PASSWORD is niet ingesteld. "
             "Redis-client wordt niet geïnitialiseerd."
         )
         fastapi_app.state.redis_client = None
+    else:
+        try:
+            fastapi_app.state.redis_client = redis.Redis(
+                host=redis_host,
+                port=redis_port,
+                password=redis_password,
+                decode_responses=True,
+            )
+            await fastapi_app.state.redis_client.ping()
+            print("Redis client geïnitialiseerd en verbonden.")
+        except redis.RedisError as e: # No change needed, already correct
+            print(f"Kon niet verbinden met Redis: {e}")
+            fastapi_app.state.redis_client = None
 
     # Initialiseer de MeiliSearch client en maak deze beschikbaar in de app state.
     # Voeg een try-except‑blok toe om opstartcrashes te voorkomen
@@ -74,6 +87,7 @@ async def lifespan(fastapi_app: FastAPI):
     ) as e:
         print(f"KRITISCH: Kon niet initialiseren of verbinden met MeiliSearch: {e}")
         fastapi_app.state.meili_client = None
+        fastapi_app.state.meili_index = None # Zorg ervoor dat de index ook None is
 
     # Initialiseer de OpenAI client alleen als er een API key is
     if fastapi_app.state.openai_api_key:
@@ -81,21 +95,6 @@ async def lifespan(fastapi_app: FastAPI):
             api_key=fastapi_app.state.openai_api_key
         )
         print("OpenAI client geïnitialiseerd.")
-
-    # Initialiseer de Redis client
-    if redis_password:
-        try:
-            fastapi_app.state.redis_client = redis.Redis(
-                host=redis_host,
-                port=redis_port,
-                password=redis_password,
-                decode_responses=True,
-            )
-            await fastapi_app.state.redis_client.ping()
-            print("Redis client geïnitialiseerd en verbonden.")
-        except redis.RedisError as e: # No change needed, already correct
-            print(f"Kon niet verbinden met Redis: {e}")
-            fastapi_app.state.redis_client = None
 
     yield
 
