@@ -152,7 +152,7 @@ async def search(request: Request, q: str):
 
 
 class Crawler:  # pylint: disable=too-few-public-methods
-    """Een webcrawler die regels respecteert en content indexeert in Meilisearch."""
+    """A web crawler that respects rules and indexes content in Meilisearch."""
 
     def __init__(self, meili_client: AsyncMeiliClient, redis_client):
         if not redis_client:
@@ -313,7 +313,7 @@ class Crawler:  # pylint: disable=too-few-public-methods
 @app.post("/api/crawl")
 async def start_crawl(request: Request, url: str, background_tasks: BackgroundTasks):
     """Endpoint om een nieuwe crawl-taak te starten op de achtergrond."""
-    try:
+    try: # No change needed, already correct
         crawler = Crawler(
             request.app.state.meili_client, request.app.state.redis_client
         )
