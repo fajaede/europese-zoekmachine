@@ -103,7 +103,7 @@ origins = [origin.strip() for origin in allowed_origins_str.split(",")]
 
 # Vercel preview URLs hebben een specifiek patroon.
 # We gebruiken een regex om alle preview-deployments veilig toe te staan.
-VERCEL_PREVIEW_REGEX = r"https://fajaede-search-frontend-.*-fajaede\.vercel\.app"
+VERCEL_PREVIEW_REGEX = r"https://europese-zoekmachine-.*-martinns-projects-8d498cad\.vercel\.app"
 
 app.add_middleware(
     CORSMiddleware,
