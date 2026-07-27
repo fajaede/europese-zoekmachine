@@ -24,9 +24,13 @@ from fastapi import (
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
 from meilisearch_python_async import Client as AsyncMeiliClient
+from dotenv import load_dotenv
 
 # Local application imports
 from api.routes.generate_seo import router as seo_router
+
+# Laad environment variables uit het .env bestand in de root directory
+load_dotenv()
 
 
 @asynccontextmanager
