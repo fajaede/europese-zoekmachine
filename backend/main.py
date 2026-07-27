@@ -331,13 +331,21 @@ class Crawler:  # pylint: disable=too-few-public-methods
 @app.post("/api/crawl")
 async def start_crawl(request: Request, url: str, background_tasks: BackgroundTasks):
     """Endpoint om een nieuwe crawl-taak te starten op de achtergrond."""
-    try:
-        crawler = Crawler(request.app.state.meili_index, request.app.state.redis_client)
-        background_tasks.add_task(crawler.run, url)
-        return {"message": f"Crawl-taak voor {url} is gestart op de achtergrond."}
-    except ValueError as e:
-        # Vang de fout af als Redis niet beschikbaar is.
-        raise HTTPException(status_code=503, detail=str(e)) from e
+    # Controleer of de benodigde services (Redis en MeiliSearch) beschikbaar zijn
+    # voordat we de crawler initialiseren.
+    if not request.app.state.redis_client:
+        raise HTTPException(
+            status_code=503,
+            detail="Kan niet crawlen: Redis is niet beschikbaar. Controleer de configuratie.",
+        )
+    if not request.app.state.meili_index:
+        raise HTTPException(
+            status_code=503,
+            detail="Kan niet crawlen: MeiliSearch is niet beschikbaar. Controleer de configuratie.",
+        )
+    crawler = Crawler(request.app.state.meili_index, request.app.state.redis_client)
+    background_tasks.add_task(crawler.run, url)
+    return {"message": f"Crawl-taak voor {url} is gestart op de achtergrond."}
 
 
 def _prepare_chat_history(history: str = None) -> list[dict]:
