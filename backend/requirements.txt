@@ -7,3 +7,4 @@ openai
 beautifulsoup4
 httpx
 gunicorn
+python-dotenv
