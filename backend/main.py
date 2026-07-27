@@ -58,7 +58,7 @@ async def lifespan(fastapi_app: FastAPI):
     fastapi_app.state.meili_client = AsyncMeiliClient(
         url=meili_host, api_key=meili_master_key
     )
-    fastapi_app.state.meili_index = fastapi_app.state.meili_client.get_index("documents")
+    fastapi_app.state.meili_index = await fastapi_app.state.meili_client.get_index("documents")
     print("MeiliSearch client geïnitialiseerd.")
 
     # Initialiseer de OpenAI client alleen als er een API key is
@@ -158,11 +158,11 @@ async def search(request: Request, q: str):
 class Crawler:  # pylint: disable=too-few-public-methods
     """A web crawler that respects rules and indexes content in Meilisearch."""
 
-    def __init__(self, meili_client: AsyncMeiliClient, redis_client):
+    def __init__(self, meili_index, redis_client):
         if not redis_client:
             raise ValueError("Redis client is niet beschikbaar voor de crawler.")
         self.redis = redis_client
-        self.meili_index = meili_client.get_index("documents")
+        self.meili_index = meili_index
         # Gebruik een standaard browser User-Agent om 403 Forbidden-fouten te voorkomen.
         # Veel websites blokkeren onbekende of custom bot User-Agents.
         # De volgorde van headers kan ook van belang zijn voor botdetectie.
@@ -319,7 +319,7 @@ async def start_crawl(request: Request, url: str, background_tasks: BackgroundTa
     """Endpoint om een nieuwe crawl-taak te starten op de achtergrond."""
     try: # No change needed, already correct
         crawler = Crawler(
-            request.app.state.meili_client, request.app.state.redis_client
+            request.app.state.meili_index, request.app.state.redis_client
         )
         background_tasks.add_task(crawler.run, url)
         return {"message": f"Crawl-taak voor {url} is gestart op de achtergrond."}
