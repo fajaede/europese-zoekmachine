@@ -5,10 +5,10 @@ based on keywords using the local LLM.
 """
 from typing import List, Optional
 
-from fastapi import APIRouter, HTTPException, Header
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from api.llm_client import LLMClient
+from .llm_client import LLMClient
 
 router = APIRouter(prefix="/api", tags=["SEO"])
 llm_client = LLMClient()
@@ -16,10 +16,14 @@ llm_client = LLMClient()
 class GenerateSEORequest(BaseModel):
     """Request model for SEO metadata generation."""
     keyword: str = Field(..., min_length=2, description="Het focus keyword voor de pagina.")
-    language: str = Field("nl", description="De taal van de content.")
+    language: str = Field("nl", description="De taal van de content.") # Line too long (108/100)
     country: str = Field("nl", description="Het doelland.")
-    site_name: Optional[str] = Field(None, description="Naam van de website voor branding in de title tag.")
-    page_type: Optional[str] = Field("service", description="Type pagina (bijv. blog, service, product).")
+    site_name: Optional[str] = Field(
+        None, description="Naam van de website voor branding in de title tag."
+    ) # Line too long (106/100)
+    page_type: Optional[str] = Field(
+        "service", description="Type pagina (bijv. blog, service, product)."
+    )
     tone: Optional[str] = Field("professional", description="De gewenste tone-of-voice.")
 
 class GenerateSEOResponse(BaseModel):
@@ -64,6 +68,6 @@ async def generate_seo(payload: GenerateSEORequest) -> GenerateSEOResponse:
         return GenerateSEOResponse.model_validate(result)
     except Exception as e:
         raise HTTPException(
-            status_code=500, 
+            status_code=500,
             detail=f"SEO generatie mislukt via LLM: {str(e)}"
         ) from e
