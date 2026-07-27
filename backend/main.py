@@ -311,6 +311,8 @@ class Crawler:  # pylint: disable=too-few-public-methods
             print(f"Fout bij het crawlen van {url}: {e}")
         except (AttributeError, TypeError) as e:  # Vang parsing- of contentfouten af
             print(f"Fout bij het verwerken van de content van {url}: {e}")
+        except Exception as e:
+            print(f"Onverwachte fout bij het verwerken van {url}: {e}")
 
     async def run(self, start_url: str, max_pages: int = 250000):
         """Start het crawlproces vanaf een begin-URL."""
