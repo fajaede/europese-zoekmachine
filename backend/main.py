@@ -157,13 +157,18 @@ async def search(request: Request, q: str):
     try:
         search_results = await request.app.state.meili_index.search(q, {"limit": limit})
         return {"results": search_results["hits"]}
-    except Exception as e:  # Vang alle exceptions
-        # Vang de "index_not_found" fout af. Dit kan variëren in de async lib.
-        if "index_not_found" in str(e):
+    except meili_errors.MeilisearchApiError as e:
+        # Specifiek de 'index_not_found' fout afvangen voor een graceful fallback.
+        if e.code == "index_not_found":
             print("Index 'documents' nog niet gevonden. Geef een lege lijst terug.")
             return {"results": []}
-
-        # Voor alle andere fouten, behandel ze als een service-onbeschikbaarheid
+        # Andere API-fouten kunnen ook optreden
+        print(f"MeiliSearch API error: {e}")
+        raise HTTPException(
+            status_code=503, detail="Zoekservice is momenteel niet beschikbaar."
+        ) from e
+    except (meili_errors.MeilisearchCommunicationError, httpx.RequestError) as e:
+        # Vang netwerkgerelateerde fouten af.
         print(f"Error connecting to MeiliSearch: {e}")
         raise HTTPException(
             status_code=503, detail="Zoekservice is momenteel niet beschikbaar."
@@ -311,7 +316,11 @@ class Crawler:  # pylint: disable=too-few-public-methods
             print(f"Fout bij het crawlen van {url}: {e}")
         except (AttributeError, TypeError) as e:  # Vang parsing- of contentfouten af
             print(f"Fout bij het verwerken van de content van {url}: {e}")
-        except Exception as e:
+        except (meili_errors.MeilisearchError, redis.RedisError) as e:
+            # Vang specifieke fouten van MeiliSearch of Redis af
+            print(f"Fout in de data-laag bij verwerken van {url}: {e}")
+        except (ValueError, IOError) as e:
+            # Vang andere verwachte fouten af, zoals problemen met URL-parsing of I/O
             print(f"Onverwachte fout bij het verwerken van {url}: {e}")
 
     async def run(self, start_url: str, max_pages: int = 250000):
