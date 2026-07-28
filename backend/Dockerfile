@@ -1,21 +1,26 @@
-# In de map 'backend-fastapi'
-FROM python:3.11-slim
+# Gebruik een officiële, slanke Python-image als basis
+FROM python:3.12-slim
 
-WORKDIR /code
+# Voorkom dat Python .pyc-bestanden schrijft
+ENV PYTHONDONTWRITEBYTECODE 1
+# Zorg ervoor dat Python-output direct wordt weergegeven (nuttig voor logs)
+ENV PYTHONUNBUFFERED 1
 
-COPY ./requirements.txt /code/requirements.txt
-COPY ./healthcheck.sh /usr/local/bin/healthcheck.sh
+# Stel de werkdirectory in binnen de container
+WORKDIR /app
 
-# Installeer curl voor de healthcheck
-RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*
-RUN pip install --no-cache-dir --upgrade -r /code/requirements.txt
+# Kopieer de dependency-bestanden
+COPY requirements.txt .
 
-# Maak het healthcheck script uitvoerbaar
-RUN chmod +x /usr/local/bin/healthcheck.sh
+# Installeer de dependencies
+# We gebruiken --no-cache-dir om de image-grootte te beperken
+RUN pip install --no-cache-dir -r requirements.txt
 
-COPY ./ /code/
+# Kopieer de rest van de applicatiecode naar de werkdirectory
+COPY . .
 
-# Zorg dat de poort overeenkomt met wat je in de code gebruikt
+# De poort die Gunicorn zal gebruiken binnen de container
 EXPOSE 18000
 
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "18000"]
+# Het commando om de applicatie te starten wanneer de container wordt gestart
+CMD ["gunicorn", "-k", "uvicorn.workers.UvicornWorker", "-w", "4", "-b", "0.0.0.0:18000", "main:app"]
