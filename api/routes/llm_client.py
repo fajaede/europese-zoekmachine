@@ -1,6 +1,7 @@
 """LLM Client related definitions."""
 
 import json
+import os
 from typing import Any, Dict
 
 import openai
@@ -16,8 +17,9 @@ class LLMClient:
     def __init__(self):
         # In een productie-omgeving zou je de base_url en api_key
         # uit environment variables halen.
+        ollama_host = os.getenv("OLLAMA_HOST", "http://localhost:11434")
         self.client = openai.AsyncOpenAI(
-            base_url="http://localhost:11434/v1",
+            base_url=f"{ollama_host}/v1",
             api_key="ollama",  # Vereist voor de OpenAI library, ook al is het lokaal.
         )
 

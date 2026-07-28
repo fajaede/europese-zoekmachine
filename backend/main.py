@@ -33,6 +33,7 @@ from dotenv import load_dotenv
 
 # Local application imports
 from api.routes.generate_seo import router as seo_router
+from api.routes.builder import router as builder_router
 
 # Laad environment variables uit het .env bestand in de root directory
 load_dotenv()
@@ -42,14 +43,14 @@ load_dotenv()
 async def lifespan(fastapi_app: FastAPI):
     """Beheer de MeiliSearch client gedurende de levensduur van de applicatie."""
     # Haal configuratie uit environment variables
-    meili_host = os.getenv("MEILI_HOST", "http://127.0.0.1:7700")
+    meili_host = os.getenv("MEILI_HOST", "http://meilisearch:7700")
     meili_master_key = os.getenv("MEILI_MASTER_KEY")
     fastapi_app.state.openai_api_key = os.getenv("OPENAI_API_KEY")
     fastapi_app.state.ollama_host = os.getenv(
         "OLLAMA_HOST", "http://localhost:11434"
     )
-    redis_host = os.getenv("REDIS_HOST", "localhost")
-    redis_port = int(os.getenv("REDIS_PORT", "6379")) # No change needed, already correct
+    redis_host = os.getenv("REDIS_HOST", "redis")
+    redis_port = int(os.getenv("REDIS_PORT", "6379"))
     redis_password = os.getenv("REDIS_PASSWORD")
 
     # Initialiseer Redis client eerst, omdat andere delen ervan afhankelijk zijn.
@@ -161,7 +162,9 @@ origins = [origin.strip() for origin in allowed_origins_str.split(",")]
 
 # Vercel preview URLs hebben een specifiek patroon.
 # We gebruiken een regex om alle preview-deployments veilig toe te staan.
-VERCEL_PREVIEW_REGEX = r"https://europese-zoekmachine-.*-martinns-projects-8d498cad\.vercel\.app"
+VERCEL_PREVIEW_REGEX = (
+    r"https://europese-zoekmachine-.*-martinns-projects-8d498cad\.vercel\.app"
+)
 
 app.add_middleware(
     CORSMiddleware,
@@ -174,6 +177,7 @@ app.add_middleware(
 
 # Integreer de SEO-generator route
 app.include_router(seo_router)
+app.include_router(builder_router)
 
 @app.get("/")
 def read_root():
@@ -321,7 +325,7 @@ class Crawler:  # pylint: disable=too-few-public-methods
             print(f"    Details: {e}")
 
     async def _process_page(self, url: str):  # pylint: disable=too-many-locals
-        """Verwerkt een enkele pagina: downloaden, parsen, valideren, indexeren en nieuwe links vinden."""
+        """Verwerkt een pagina: downloadt, parset, indexeert en vindt nieuwe links."""
         if await self.redis.sismember("crawler:visited_urls", url):
             return
 
@@ -420,7 +424,7 @@ class Crawler:  # pylint: disable=too-few-public-methods
                     print(f"Geïndexeerd: {url}")
 
             # Voeg altijd nieuwe links toe aan de wachtrij, zelfs als de pagina niet geïndexeerd is.
-            base_url = f"{urlparse(url).scheme}://{urlparse(url).netloc}"
+            base_url = str(res.url) # Gebruik de uiteindelijke URL na redirects als basis
             for link in soup.find_all("a", href=True):
                 href = link["href"]
                 # Normaliseer de URL door het fragment te verwijderen.
@@ -546,13 +550,16 @@ def _build_system_prompt() -> str:
              "Houd je aan de volgende regels:\n")
     part2 = (
         "1. Baseer je antwoord UITSLUITEND op de informatie in de 'Context'. "
-        "Verzin geen informatie.\n" "2. Als de context geen antwoord bevat, zeg dan: "
-        "'De zoekresultaten bevatten onvoldoende informatie om deze vraag te "
-        "beantwoorden.'\n"
+        "Verzin geen informatie.\n"
+        "2. Als de context geen antwoord bevat, zeg dan: 'De zoekresultaten "
+        "bevatten onvoldoende informatie om deze vraag te beantwoorden.'\n"
     )
-    part3 = ("3. Structureer je antwoord als een FAQ of How‑To als de context dit "
-             "toelaat. Gebruik Markdown.\n" "4. Voeg aan het einde van ELKE zin een "
-             "citaat toe met de bronnummers. Bijvoorbeeld: 'Dit is een feit. [1, 3]'\n")
+    part3 = (
+        "3. Structureer je antwoord als een FAQ of How‑To als de context dit "
+        "toelaat. Gebruik Markdown.\n"
+        "4. Voeg aan het einde van ELKE zin een citaat toe met de bronnummers. "
+        "Bijvoorbeeld: 'Dit is een feit. [1, 3]'\n"
+    )
     part4 = ("5. Combineer citaten. Bijvoorbeeld: [1, 2].\n"
              "6. Schrijf in een heldere, feitelijke en neutrale toon.\n"
              "7. Antwoord altijd in de taal van de vraag van de gebruiker.")
