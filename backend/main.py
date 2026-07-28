@@ -329,15 +329,15 @@ class Crawler:  # pylint: disable=too-few-public-methods
         if await self.redis.sismember("crawler:visited_urls", url):
             return
 
-        # Markeer URL als bezocht aan het begin om race conditions te voorkomen.
-        await self.redis.sadd("crawler:visited_urls", url)
-
         try:
             # Regel: Respecteer robots.txt
             robot_parser = await self._get_robot_parser(url)
             if not robot_parser.can_fetch(self.client.headers["User-Agent"], url):
                 print(f"Uitgesloten door robots.txt: {url}")
                 return
+
+            # Markeer URL als bezocht na de robots.txt check om race conditions te voorkomen.
+            await self.redis.sadd("crawler:visited_urls", url)
 
             # Regel: Beleefdheidsvertraging
             await asyncio.sleep(1.5)
