@@ -72,22 +72,41 @@ async def lifespan(fastapi_app: FastAPI):
             fastapi_app.state.redis_client = None
 
     # Initialiseer de MeiliSearch client en maak deze beschikbaar in de app state.
-    # Voeg een try-except‑blok toe om opstartcrashes te voorkomen
-    # wanneer MeiliSearch niet direct beschikbaar is.
     try:
         fastapi_app.state.meili_client = AsyncMeiliClient(
             url=meili_host,
             api_key=meili_master_key,
         )
         client = fastapi_app.state.meili_client
-        fastapi_app.state.meili_index = await client.get_index("documents")
-        print("MeiliSearch client geïnitialiseerd.")
+        try:
+            fastapi_app.state.meili_index = await client.get_index("documents")
+            print("MeiliSearch client en index 'documents' geïnitialiseerd.")
+        except meili_errors.MeilisearchApiError as e:
+            if e.code == "index_not_found":
+                print("MeiliSearch index 'documents' niet gevonden, aanmaken...")
+                fastapi_app.state.meili_index = await client.create_index("documents")
+                print("MeiliSearch index 'documents' aangemaakt.")
+                # Configureer de zoekinstellingen voor de nieuwe index
+                await fastapi_app.state.meili_index.update_settings({
+                    "searchableAttributes": ["title", "content"],
+                    "filterableAttributes": ["url"],
+                    "sortableAttributes": [],
+                })
+                print("MeiliSearch indexinstellingen geconfigureerd.")
+            else:
+                print(f"KRITISCH: MeiliSearch API fout bij initialisatie: {e}")
+                fastapi_app.state.meili_client = None
+                fastapi_app.state.meili_index = None
     except (
         meili_errors.MeilisearchCommunicationError, httpx.ConnectError
     ) as e:
         print(f"KRITISCH: Kon niet initialiseren of verbinden met MeiliSearch: {e}")
         fastapi_app.state.meili_client = None
         fastapi_app.state.meili_index = None # Zorg ervoor dat de index ook None is
+    except Exception as e: # Vang andere onverwachte fouten op tijdens client creatie
+        print(f"KRITISCH: Onverwachte fout bij MeiliSearch client initialisatie: {e}")
+        fastapi_app.state.meili_client = None
+        fastapi_app.state.meili_index = None
 
     # Initialiseer de OpenAI client alleen als er een API key is
     if fastapi_app.state.openai_api_key:
