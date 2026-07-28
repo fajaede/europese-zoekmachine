@@ -246,6 +246,7 @@ class Crawler:  # pylint: disable=too-few-public-methods
         self.client = httpx.AsyncClient(headers=headers, follow_redirects=True, timeout=10)
         self.content_hashes = set()
         self.robot_parsers = {}
+        self.junk_url_patterns = ["/login", "/register", "?replytocom="]
 
     def _get_robot_parser(self, url: str) -> RobotFileParser:
         """Haalt de robots.txt parser voor een domein op en cachet deze."""
@@ -366,11 +367,15 @@ class Crawler:  # pylint: disable=too-few-public-methods
             base_url = f"{urlparse(url).scheme}://{urlparse(url).netloc}"
             for link in soup.find_all("a", href=True):
                 href = link["href"]
-                full_url = urljoin(base_url, href)
+                # Normaliseer de URL door het fragment te verwijderen.
+                full_url = urljoin(base_url, href).split("#")[0]
                 # Crawl alleen links binnen hetzelfde domein en voeg toe aan Redis queue
                 if (
                     urlparse(full_url).netloc == urlparse(base_url).netloc
-                    and not await self.redis.sismember("crawler:visited_urls", full_url)
+                    and not any(pattern in full_url for pattern in self.junk_url_patterns)
+                    and not await self.redis.sismember(
+                        "crawler:visited_urls", full_url
+                    )
                 ):
                     await self.redis.lpush("crawler:queue", full_url)
 
