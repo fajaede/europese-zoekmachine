@@ -86,8 +86,16 @@ async def lifespan(fastapi_app: FastAPI):
                 print("MeiliSearch index 'documents' niet gevonden, aanmaken...")
                 # Het aanmaken van een index is een asynchrone taak in MeiliSearch.
                 # We moeten wachten tot de taak voltooid is.
-                task = await client.create_index(uid="documents", primary_key="id")
-                await client.wait_for_task(task.task_uid)
+                task_info = await client.create_index(uid="documents", primary_key="id")
+                task_uid = task_info["taskUid"]
+
+                # Handmatig wachten tot de taak is voltooid, omdat wait_for_task niet bestaat.
+                while True:
+                    task_status = await client.get_task(task_uid)
+                    if task_status["status"] in ("succeeded", "failed"):
+                        break
+                    await asyncio.sleep(0.1) # Wacht 100ms voor de volgende controle
+
                 print("MeiliSearch index 'documents' succesvol aangemaakt.")
 
                 # Nu de index gegarandeerd bestaat, kunnen we hem ophalen en configureren.
@@ -98,7 +106,14 @@ async def lifespan(fastapi_app: FastAPI):
                     "searchableAttributes": ["title", "content"],
                     "filterableAttributes": ["url"],
                 })
-                await client.wait_for_task(settings_task.task_uid)
+                settings_uid = settings_task["taskUid"]
+
+                # Wacht ook op het toepassen van de instellingen.
+                while True:
+                    task_status = await client.get_task(settings_uid)
+                    if task_status["status"] in ("succeeded", "failed"):
+                        break
+                    await asyncio.sleep(0.1)
                 print("MeiliSearch indexinstellingen geconfigureerd.")
             else:
                 print(f"KRITISCH: MeiliSearch API fout bij initialisatie: {e}")
@@ -252,7 +267,9 @@ class Crawler:  # pylint: disable=too-few-public-methods
         text_content = soup.get_text(separator=" ", strip=True)
         if not text_content:
             return True
-        content_hash = hashlib.sha256(text_content.encode("utf-8")).hexdigest()
+        content_hash = hashlib.sha256(
+            text_content.encode("utf-8")
+        ).hexdigest()
         # Gebruik Redis om hashes over sessies heen te onthouden
         if await self.redis.sismember("crawler:content_hashes", content_hash):
             return True
@@ -260,17 +277,20 @@ class Crawler:  # pylint: disable=too-few-public-methods
         return False
 
     async def _process_page(self, url: str):  # pylint: disable=too-many-locals
-        """Verwerkt een enkele pagina: downloaden, parsen, valideren en indexeren."""
+        """Verwerkt een enkele pagina: downloaden, parsen, valideren, indexeren en nieuwe links vinden."""
         if await self.redis.sismember("crawler:visited_urls", url):
             return
 
-        # Regel: Respecteer robots.txt
-        robot_parser = self._get_robot_parser(url)
-        if not robot_parser.can_fetch(self.client.headers["User-Agent"], url):
-            print(f"Uitgesloten door robots.txt: {url}")
-            return
+        # Markeer URL als bezocht aan het begin om race conditions te voorkomen.
+        await self.redis.sadd("crawler:visited_urls", url)
 
         try:
+            # Regel: Respecteer robots.txt
+            robot_parser = self._get_robot_parser(url)
+            if not robot_parser.can_fetch(self.client.headers["User-Agent"], url):
+                print(f"Uitgesloten door robots.txt: {url}")
+                return
+
             # Regel: Beleefdheidsvertraging
             await asyncio.sleep(1.5)
 
@@ -288,41 +308,61 @@ class Crawler:  # pylint: disable=too-few-public-methods
 
             soup = BeautifulSoup(res.content, "html.parser")
 
+            # Variabele om bij te houden of we moeten indexeren.
+            should_index = True
+
             # Regel: Controleer op 'noindex' meta tag
             meta_robots = soup.find("meta", attrs={"name": "robots"})
             if meta_robots and "noindex" in meta_robots.get("content", "").lower():
-                print(f"Overgeslagen ('noindex' tag): {url}")
-                return
+                print(f"Niet indexeren ('noindex' tag): {url}")
+                should_index = False
 
-            # Regel: Controleer op dubbele content
-            if await self._is_duplicate(soup):
-                print(f"Overgeslagen (dubbele content): {url}")
-                return
+            if should_index:
+                # Regel: Controleer op dubbele content
+                if await self._is_duplicate(soup):
+                    print(f"Overgeslagen (dubbele content): {url}")
+                    should_index = False
 
-            # Extraheer titel en content
-            title = soup.title.string if soup.title else "Ongetiteld"
-            # Verwijder script en style tags voor schonere content
-            for script_or_style in soup(["script", "style"]):
-                script_or_style.decompose()
-            content = soup.get_text(separator="\n", strip=True)
+            if should_index:
+                # Extraheer titel en content
+                title = soup.title.string if soup.title else "Ongetiteld"
+                # Verwijder script en style tags voor schonere content
+                for script_or_style in soup(["script", "style"]):
+                    script_or_style.decompose()
+                content = soup.get_text(separator="\n", strip=True)
 
-            # Regel: Controleer op 'thin content'
-            if len(content.split()) < 100:
-                print(f"Overgeslagen (te weinig content): {url}")
-                return
+                # Regel: Controleer op 'thin content'
+                if len(content.split()) < 100:
+                    print(f"Overgeslagen (te weinig content): {url}")
+                else:
+                    # Document voorbereiden voor Meilisearch
+                    document = {
+                        "id": hashlib.sha256(url.encode()).hexdigest(),
+                        "url": url,
+                        "title": title,
+                        "content": content,
+                    "structured_data": {},  # Nieuw veld voor gestructureerde data
+                    }
 
-            # Document voorbereiden voor Meilisearch
-            document = {
-                "id": hashlib.sha256(url.encode()).hexdigest(),
-                "url": url,
-                "title": title,
-                "content": content,
-            }
+                    # Concept: Zoek naar gestructureerde data (JSON-LD)
+                    structured_data_list = []
+                    for script in soup.find_all("script", type="application/ld+json"):
+                        try:
+                            if script.string:
+                                data = json.loads(script.string)
+                                if data and data.get("@type") in ["FAQPage", "HowTo"]:
+                                    structured_data_list.append(data)
+                        except (json.JSONDecodeError, AttributeError):
+                            continue  # Negeer ongeldige JSON
 
-            await self.meili_index.add_documents([document])
-            print(f"Geïndexeerd: {url}")
+                    if structured_data_list:
+                        document["structured_data"] = {"items": structured_data_list}
+                        print(f"Gestructureerde data gevonden op: {url}")
 
-            # Voeg nieuwe links toe aan de wachtrij
+                    await self.meili_index.add_documents([document])
+                    print(f"Geïndexeerd: {url}")
+
+            # Voeg altijd nieuwe links toe aan de wachtrij, zelfs als de pagina niet geïndexeerd is.
             base_url = f"{urlparse(url).scheme}://{urlparse(url).netloc}"
             for link in soup.find_all("a", href=True):
                 href = link["href"]
@@ -330,13 +370,9 @@ class Crawler:  # pylint: disable=too-few-public-methods
                 # Crawl alleen links binnen hetzelfde domein en voeg toe aan Redis queue
                 if (
                     urlparse(full_url).netloc == urlparse(base_url).netloc
-                    and not await self.redis.sismember(
-                        "crawler:visited_urls", full_url
-                    )
+                    and not await self.redis.sismember("crawler:visited_urls", full_url)
                 ):
                     await self.redis.lpush("crawler:queue", full_url)
-            # Markeer URL als bezocht in Redis nadat alles succesvol is verwerkt
-            await self.redis.sadd("crawler:visited_urls", url)
 
         except httpx.RequestError as e:
             print(f"Fout bij het crawlen van {url}: {e}")
@@ -377,8 +413,10 @@ async def start_crawl(request: Request, url: str, background_tasks: BackgroundTa
         )
     if not request.app.state.meili_index:
         raise HTTPException(
-            status_code=503,
-            detail="Kan niet crawlen: MeiliSearch is niet beschikbaar. Controleer de configuratie.",
+            status_code=503, detail=(
+                "Kan niet crawlen: MeiliSearch is niet beschikbaar. "
+                "Controleer de configuratie."
+            )
         )
     crawler = Crawler(request.app.state.meili_index, request.app.state.redis_client)
     background_tasks.add_task(crawler.run, url)
