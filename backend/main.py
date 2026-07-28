@@ -7,7 +7,7 @@ import asyncio
 import io
 import hashlib
 from contextlib import asynccontextmanager
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urljoin, urlparse, urlunparse
 from urllib.robotparser import RobotFileParser
 
 # Third‑party imports
@@ -251,20 +251,24 @@ class Crawler:  # pylint: disable=too-few-public-methods
         self.junk_url_patterns = ["/login", "/register", "?replytocom="]
         self.start_domain = ""  # Wordt ingesteld in de run() methode
 
-    def _get_robot_parser(self, url: str) -> RobotFileParser:
+    async def _get_robot_parser(self, url: str) -> RobotFileParser:
         """Haalt de robots.txt parser voor een domein op en cachet deze."""
-        domain = urlparse(url).netloc
-        if domain not in self.robot_parsers:
-            rp = RobotFileParser()
-            rp.set_url(urljoin(url, "/robots.txt"))
-            try:
-                rp.read()
-                self.robot_parsers[domain] = rp
-            except (httpx.RequestError, ValueError, TypeError) as e:
-                print(f"Kon robots.txt niet lezen voor {domain}: {e}")
-                # Maak een lege parser aan om door te gaan bij een fout
-                self.robot_parsers[domain] = RobotFileParser()
-        return self.robot_parsers[domain]
+        parsed_url = urlparse(url)
+        domain = parsed_url.netloc
+        if domain in self.robot_parsers:
+            return self.robot_parsers[domain]
+
+        rp = RobotFileParser()
+        robots_url = urlunparse((parsed_url.scheme, domain, '/robots.txt', '', '', ''))
+        try:
+            resp = await self.client.get(robots_url, timeout=5)
+            if resp.status_code == 200:
+                rp.parse(resp.text.splitlines())
+        except httpx.RequestError as e:
+            print(f"Kon robots.txt niet lezen voor {domain}: {e}")
+        # Als robots.txt niet gevonden wordt (404) of er is een fout, gaan we uit van 'allow all'.
+        self.robot_parsers[domain] = rp
+        return rp
 
     async def _is_duplicate(self, soup: BeautifulSoup) -> bool:
         """Controleert op dubbele content via content hashing."""
@@ -326,7 +330,7 @@ class Crawler:  # pylint: disable=too-few-public-methods
 
         try:
             # Regel: Respecteer robots.txt
-            robot_parser = self._get_robot_parser(url)
+            robot_parser = await self._get_robot_parser(url)
             if not robot_parser.can_fetch(self.client.headers["User-Agent"], url):
                 print(f"Uitgesloten door robots.txt: {url}")
                 return
@@ -343,8 +347,9 @@ class Crawler:  # pylint: disable=too-few-public-methods
             # Bepaal het pad op basis van content type
             if "application/pdf" in content_type:
                 if content_length > 5 * 1024 * 1024: # 5MB limiet
-                    print((f"Overgeslagen (PDF te groot: "
-                           f"{content_length / 1024 / 1024:.2f}MB): {url}"))
+                    print(
+                        f"Overgeslagen (PDF te groot: {content_length / 1024 / 1024:.2f}MB): {url}"
+                    )
                     return
                 res = await self.client.get(url, timeout=30) # Langere timeout voor PDF's
                 res.raise_for_status()
