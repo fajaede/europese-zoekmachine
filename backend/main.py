@@ -4,6 +4,7 @@
 import os
 import json
 import asyncio
+import io
 import hashlib
 from contextlib import asynccontextmanager
 from urllib.parse import urljoin, urlparse
@@ -13,6 +14,7 @@ from urllib.robotparser import RobotFileParser
 import httpx
 import openai
 import redis.asyncio as redis
+from pypdf import PdfReader, errors as pypdf_errors
 from bs4 import BeautifulSoup
 from fastapi import (
     Depends,
@@ -277,6 +279,42 @@ class Crawler:  # pylint: disable=too-few-public-methods
         await self.redis.sadd("crawler:content_hashes", content_hash)
         return False
 
+    async def _process_pdf(self, url: str, pdf_content: bytes):
+        """Verwerkt een PDF-bestand: extraheert tekst en indexeert deze."""
+        try:
+            text_content = ""
+            reader = PdfReader(io.BytesIO(pdf_content))
+            for page in reader.pages:
+                text_content += page.extract_text() + "\n"
+
+            if not text_content.strip():
+                print(f"Overgeslagen (lege PDF): {url}")
+                return
+
+            if reader.metadata and reader.metadata.title:
+                title = reader.metadata.title
+            else:
+                title = url.split("/")[-1]
+
+            document = {
+                "id": hashlib.sha256(url.encode()).hexdigest(),
+                "url": url,
+                "title": title,
+                "content": text_content,
+                "structured_data": {}, # PDF's hebben geen gestructureerde data
+            }
+
+            # Controleer op dubbele content voordat we indexeren
+            if await self._is_duplicate(BeautifulSoup(text_content, "html.parser")):
+                print(f"Overgeslagen (dubbele PDF content): {url}")
+                return
+
+            await self.meili_index.add_documents([document])
+            print(f"PDF Geïndexeerd: {url}")
+        except (pypdf_errors.PdfReadError, IOError, ValueError, TypeError) as e:
+            print(f"Fout bij het lezen of parsen van PDF {url}.")
+            print(f"    Details: {e}")
+
     async def _process_page(self, url: str):  # pylint: disable=too-many-locals
         """Verwerkt een enkele pagina: downloaden, parsen, valideren, indexeren en nieuwe links vinden."""
         if await self.redis.sismember("crawler:visited_urls", url):
@@ -299,8 +337,20 @@ class Crawler:  # pylint: disable=too-few-public-methods
             head_res = await self.client.head(url, timeout=5)
             head_res.raise_for_status()
             content_type = head_res.headers.get("Content-Type", "")
-            if "text/html" not in content_type:
-                print(f"Overgeslagen (geen HTML): {url}")
+            content_length = int(head_res.headers.get("Content-Length", 0))
+
+            # Bepaal het pad op basis van content type
+            if "application/pdf" in content_type:
+                if content_length > 5 * 1024 * 1024: # 5MB limiet
+                    print((f"Overgeslagen (PDF te groot: "
+                           f"{content_length / 1024 / 1024:.2f}MB): {url}"))
+                    return
+                res = await self.client.get(url, timeout=30) # Langere timeout voor PDF's
+                res.raise_for_status()
+                await self._process_pdf(url, res.content)
+                return # Stop verdere verwerking voor PDF's
+            elif "text/html" not in content_type:
+                print(f"Overgeslagen (geen HTML of PDF): {url}")
                 return
 
             # Download de daadwerkelijke pagina
@@ -413,8 +463,9 @@ async def start_crawl(request: Request, url: str, background_tasks: BackgroundTa
     # voordat we de crawler initialiseren.
     if not request.app.state.redis_client:
         raise HTTPException(
-            status_code=503,
-            detail="Kan niet crawlen: Redis is niet beschikbaar. Controleer de configuratie.",
+            status_code=503, detail=(
+                "Kan niet crawlen: Redis is niet beschikbaar. "
+                "Controleer de configuratie.")
         )
     if not request.app.state.meili_index:
         raise HTTPException(
