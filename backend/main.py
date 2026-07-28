@@ -444,7 +444,12 @@ class Crawler:  # pylint: disable=too-few-public-methods
     async def run(self, start_url: str, max_pages: int = 250000):
         """Start het crawlproces vanaf een begin-URL."""
         # Bepaal het hoofddomein voor de scope van de crawl
-        self.start_domain = urlparse(start_url).netloc
+        # Strip 'www.' to crawl all subdomains of the root domain.
+        netloc = urlparse(start_url).netloc
+        if netloc.startswith("www."):
+            self.start_domain = netloc[4:]
+        else:
+            self.start_domain = netloc
 
         # Voeg de start_url toe aan de wachtrij als deze leeg is
         if await self.redis.llen("crawler:queue") == 0:
