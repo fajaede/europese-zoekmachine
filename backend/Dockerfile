@@ -6,18 +6,22 @@ ENV PYTHONDONTWRITEBYTECODE 1
 # Zorg ervoor dat Python-output direct wordt weergegeven (nuttig voor logs)
 ENV PYTHONUNBUFFERED 1
 
-# Stel de werkdirectory in binnen de container
-WORKDIR /app
+# Stel de werkdirectory in voor de applicatiecode
+WORKDIR /app/backend
 
 # Kopieer de dependency-bestanden
-COPY requirements.txt .
+COPY backend/requirements.txt .
 
 # Installeer de dependencies
 # We gebruiken --no-cache-dir om de image-grootte te beperken
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Kopieer de rest van de applicatiecode naar de werkdirectory
-COPY . .
+# Kopieer de backend- en api-mappen naar de container
+COPY backend/ /app/backend/
+COPY api/ /app/api/
+
+# Voeg de root van de app toe aan de PYTHONPATH zodat 'api' gevonden kan worden
+ENV PYTHONPATH "${PYTHONPATH}:/app"
 
 # De poort die Gunicorn zal gebruiken binnen de container
 EXPOSE 18000
