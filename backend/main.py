@@ -84,14 +84,21 @@ async def lifespan(fastapi_app: FastAPI):
         except meili_errors.MeilisearchApiError as e:
             if e.code == "index_not_found":
                 print("MeiliSearch index 'documents' niet gevonden, aanmaken...")
-                fastapi_app.state.meili_index = await client.create_index("documents")
-                print("MeiliSearch index 'documents' aangemaakt.")
+                # Het aanmaken van een index is een asynchrone taak in MeiliSearch.
+                # We moeten wachten tot de taak voltooid is.
+                task = await client.create_index(uid="documents", primary_key="id")
+                await client.wait_for_task(task.task_uid)
+                print("MeiliSearch index 'documents' succesvol aangemaakt.")
+
+                # Nu de index gegarandeerd bestaat, kunnen we hem ophalen en configureren.
+                fastapi_app.state.meili_index = await client.get_index("documents")
+
                 # Configureer de zoekinstellingen voor de nieuwe index
-                await fastapi_app.state.meili_index.update_settings({
+                settings_task = await fastapi_app.state.meili_index.update_settings({
                     "searchableAttributes": ["title", "content"],
                     "filterableAttributes": ["url"],
-                    "sortableAttributes": [],
                 })
+                await client.wait_for_task(settings_task.task_uid)
                 print("MeiliSearch indexinstellingen geconfigureerd.")
             else:
                 print(f"KRITISCH: MeiliSearch API fout bij initialisatie: {e}")
@@ -103,7 +110,7 @@ async def lifespan(fastapi_app: FastAPI):
         print(f"KRITISCH: Kon niet initialiseren of verbinden met MeiliSearch: {e}")
         fastapi_app.state.meili_client = None
         fastapi_app.state.meili_index = None # Zorg ervoor dat de index ook None is
-    except Exception as e: # Vang andere onverwachte fouten op tijdens client creatie
+    except (TypeError, ValueError) as e: # Vang configuratie- of onverwachte fouten op
         print(f"KRITISCH: Onverwachte fout bij MeiliSearch client initialisatie: {e}")
         fastapi_app.state.meili_client = None
         fastapi_app.state.meili_index = None
