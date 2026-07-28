@@ -1,0 +1,51 @@
+version: '3.8'
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: fajaede-backend
+    restart: always
+    env_file:
+      - .env
+    ports:
+      - "127.0.0.1:18000:18000" # Koppel alleen aan localhost op de host
+    networks:
+      - fajaede-net
+    depends_on:
+      - meilisearch
+      - redis
+
+  meilisearch:
+    image: getmeili/meilisearch:v1.8
+    container_name: fajaede-meilisearch
+    restart: always
+    env_file:
+      - .env
+    ports:
+      - "127.0.0.1:7700:7700"
+    volumes:
+      - meili_data:/meili_data
+    networks:
+      - fajaede-net
+
+  redis:
+    image: redis:7-alpine
+    container_name: fajaede-redis
+    restart: always
+    env_file:
+      - .env
+    command: redis-server --requirepass ${REDIS_PASSWORD}
+    volumes:
+      - redis_data:/data
+    networks:
+      - fajaede-net
+
+volumes:
+  meili_data:
+  redis_data:
+
+networks:
+  fajaede-net:
+    driver: bridge

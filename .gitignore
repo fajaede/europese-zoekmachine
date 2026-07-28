@@ -30,6 +30,3 @@ venv/
 
 # Root-level package manager files
 /package-lock.json
-
-# Deployment files for other platforms
-docker-compose.yml
