@@ -140,6 +140,10 @@ async def lifespan(fastapi_app: FastAPI):
         )
         print("OpenAI client geïnitialiseerd.")
 
+    # Initialiseer een lock en een placeholder voor de crawler-instantie
+    fastapi_app.state.crawler_lock = asyncio.Lock()
+    fastapi_app.state.crawler_instance = None
+
     yield
 
 
@@ -477,24 +481,33 @@ class Crawler:  # pylint: disable=too-few-public-methods
 @app.post("/api/crawl")
 async def start_crawl(request: Request, url: str, background_tasks: BackgroundTasks):
     """Endpoint om een nieuwe crawl-taak te starten op de achtergrond."""
-    # Controleer of de benodigde services (Redis en MeiliSearch) beschikbaar zijn
-    # voordat we de crawler initialiseren.
-    if not request.app.state.redis_client:
-        raise HTTPException(
-            status_code=503, detail=(
-                "Kan niet crawlen: Redis is niet beschikbaar. "
-                "Controleer de configuratie.")
-        )
-    if not request.app.state.meili_index:
-        raise HTTPException(
-            status_code=503, detail=(
-                "Kan niet crawlen: MeiliSearch is niet beschikbaar. "
-                "Controleer de configuratie."
+    # Probeer de lock te verkrijgen zonder te wachten.
+    if not request.app.state.crawler_lock.locked():
+        async with request.app.state.crawler_lock:
+            # Controleer of de benodigde services beschikbaar zijn.
+            if not request.app.state.redis_client:
+                raise HTTPException(
+                    status_code=503,
+                    detail="Kan niet crawlen: Redis is niet beschikbaar.",
+                )
+            if not request.app.state.meili_index:
+                raise HTTPException(
+                    status_code=503,
+                    detail="Kan niet crawlen: MeiliSearch is niet beschikbaar.",
+                )
+
+            # Creëer en start de crawler.
+            crawler = Crawler(
+                request.app.state.meili_index, request.app.state.redis_client
             )
-        )
-    crawler = Crawler(request.app.state.meili_index, request.app.state.redis_client)
-    background_tasks.add_task(crawler.run, url)
-    return {"message": f"Crawl-taak voor {url} is gestart op de achtergrond."}
+            request.app.state.crawler_instance = crawler
+            background_tasks.add_task(crawler.run, url)
+            return {"message": f"Crawl-taak voor {url} is gestart."}
+    else:
+        # Als de lock al bezet is, is er al een crawl-taak actief.
+        return {
+            "message": "Een crawl-taak is al actief. Wacht tot deze is voltooid."
+        }
 
 
 def _prepare_chat_history(history: str = None) -> list[dict]:
