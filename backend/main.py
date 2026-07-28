@@ -249,6 +249,7 @@ class Crawler:  # pylint: disable=too-few-public-methods
         self.content_hashes = set()
         self.robot_parsers = {}
         self.junk_url_patterns = ["/login", "/register", "?replytocom="]
+        self.start_domain = ""  # Wordt ingesteld in de run() methode
 
     def _get_robot_parser(self, url: str) -> RobotFileParser:
         """Haalt de robots.txt parser voor een domein op en cachet deze."""
@@ -419,9 +420,9 @@ class Crawler:  # pylint: disable=too-few-public-methods
                 href = link["href"]
                 # Normaliseer de URL door het fragment te verwijderen.
                 full_url = urljoin(base_url, href).split("#")[0]
-                # Crawl alleen links binnen hetzelfde domein en voeg toe aan Redis queue
+                # Crawl alleen links binnen hetzelfde (sub)domein en voeg toe aan Redis queue
                 if (
-                    urlparse(full_url).netloc == urlparse(base_url).netloc
+                    urlparse(full_url).netloc.endswith(self.start_domain)
                     and not any(pattern in full_url for pattern in self.junk_url_patterns)
                     and not await self.redis.sismember(
                         "crawler:visited_urls", full_url
@@ -442,6 +443,9 @@ class Crawler:  # pylint: disable=too-few-public-methods
 
     async def run(self, start_url: str, max_pages: int = 250000):
         """Start het crawlproces vanaf een begin-URL."""
+        # Bepaal het hoofddomein voor de scope van de crawl
+        self.start_domain = urlparse(start_url).netloc
+
         # Voeg de start_url toe aan de wachtrij als deze leeg is
         if await self.redis.llen("crawler:queue") == 0:
             await self.redis.lpush("crawler:queue", start_url)
