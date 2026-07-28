@@ -433,15 +433,16 @@ class Crawler:  # pylint: disable=too-few-public-methods
                 href = link["href"]
                 # Normaliseer de URL door het fragment te verwijderen.
                 full_url = urljoin(base_url, href).split("#")[0]
-                # Crawl alleen links binnen hetzelfde (sub)domein en voeg toe aan Redis queue
-                if (
-                    urlparse(full_url).netloc.endswith(self.start_domain)
-                    and not any(pattern in full_url for pattern in self.junk_url_patterns)
-                    and not await self.redis.sismember(
-                        "crawler:visited_urls", full_url
-                    )
-                ):
-                    await self.redis.lpush("crawler:queue", full_url)
+
+                # Valideer of de link binnen het toegestane domein valt.
+                link_netloc = urlparse(full_url).netloc
+                is_in_domain = (
+                    link_netloc == self.start_domain or link_netloc.endswith(f".{self.start_domain}")
+                )
+
+                if is_in_domain and not any(pattern in full_url for pattern in self.junk_url_patterns):
+                    if not await self.redis.sismember("crawler:visited_urls", full_url):
+                        await self.redis.lpush("crawler:queue", full_url)
 
         except httpx.RequestError as e:
             print(f"Fout bij het crawlen van {url}: {e}")
