@@ -37,9 +37,8 @@ const nextConfig = {
     root: __dirname,
   },
 
-  // Allow cross-origin requests from the specified IP during development.
-  // This is necessary for accessing the dev server from other devices on the same network.
-  allowedDevOrigins: ['192.168.56.1'],
+  experimental: {
+  },
 };
 
 export default nextConfig;

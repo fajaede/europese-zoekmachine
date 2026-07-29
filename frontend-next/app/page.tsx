@@ -58,11 +58,11 @@ export default function Home() {
     isFollowUp: boolean = false
   ) => {
     if (!isFollowUp) {
-      setLoading(true);
+      setLoading(true); // Start de hoofdlaadindicator
     } else {
       setFollowUpLoading(true);
     }
-    setError("");
+    if (!isFollowUp) setError("");
 
     try {
       const params = new URLSearchParams({
@@ -75,11 +75,8 @@ export default function Home() {
         params.append("history", JSON.stringify(historyList.slice(-5)));
       }
 
-      // Maak twee parallelle verzoeken: één voor de snelle zoekresultaten en één voor de AI-samenvatting.
-      const createApiPromise = (path: string) => {
-        // Gebruik de environment variable om de volledige URL te bouwen.
-        // De `|| ''` is een fallback voor lokale ontwikkeling.
-        const fullUrl = `${process.env.NEXT_PUBLIC_API_URL || ''}${path}`;
+      const fetchApi = (path: string) => {
+        const fullUrl = path; // Gebruik een relatief pad, Next.js's rewrites handelen de proxy af.
         return fetch(fullUrl).then(async (res) => {
           if (!res.ok) {
             // Probeer de JSON-body met de foutdetails te parsen.
@@ -95,71 +92,70 @@ export default function Home() {
         });
       };
 
-      const searchPromise = createApiPromise(`/api/search?${params.toString()}`); // Path begint met /
+      // Start het zoekverzoek
+      const searchPromise = fetchApi(`/api/search?${params.toString()}`);
 
-      const aiPromise = currentTab === "all" 
-        // Filter de "denk"-placeholder uit de geschiedenis die naar de AI gaat
-        ? createApiPromise(`/api/summarize?${new URLSearchParams({ // Path begint met /
+      // Start het AI-verzoek parallel als de 'all' tab actief is
+      const aiPromise = currentTab === "all"
+        ? fetchApi(`/api/summarize?${new URLSearchParams({
             q: searchQuery,
             history: JSON.stringify(historyList.filter(msg => msg.content !== "fajaedeAI+ is aan het denken...")),
           }).toString()}`)
-        : Promise.resolve({ ai: "" }); // Geen AI-verzoek voor andere tabs
+        : Promise.resolve(null); // Geen AI-verzoek op andere tabs
 
-      // Wacht op de zoekresultaten (dit is meestal snel)
-      const searchData = await searchPromise;
-      // Update de zoekresultaten alleen als het geen vervolgvraag is.
-      if (!isFollowUp) {
-        setHits(searchData.results || []);
-      }
+      // Wacht op het zoekverzoek, update de UI en stop de hoofdlaadindicator
+      searchPromise.then(searchResponse => {
+        const searchResults = searchResponse.results || [];
+        if (!isFollowUp) {
+          setHits(searchResults);
+        }
+      }).catch(searchError => {
+        const message = searchError instanceof Error ? searchError.message : String(searchError);
+        setError(`Zoekopdracht mislukt: ${message}`);
+      }).finally(() => {
+        if (!isFollowUp) setLoading(false); // Stop de hoofdlaadindicator zodra de zoekresultaten er zijn (of gefaald zijn)
+      });
 
-      // Wacht op het AI-antwoord (dit kan langer duren)
-      // en update de chat alleen als het antwoord binnenkomt.
-      if (currentTab === "all") {
-        aiPromise.then(aiData => {
-          // Vervang de "denk"-placeholder met het echte antwoord
-          if (aiData && aiData.ai) {
+      // Wacht op het AI-verzoek en update de chat
+      aiPromise.then(aiResponse => {
+        if (aiResponse) {
             setChatHistory(prev => [
               ...prev.filter(msg => msg.content !== "fajaedeAI+ is aan het denken..."),
-              { role: "assistant", content: aiData.ai }
+              { role: "assistant", content: aiResponse.ai }
             ]);
-          }
-        }).catch(err => {
-          console.error("AI summary failed:", err.message);
-          // Vervang de "denk"-placeholder met een duidelijke foutmelding
-          const errorMessage = err.message || "Sorry, de AI-samenvatting kon op dit moment niet worden geladen.";
-          setChatHistory(prev => [
-            ...prev.filter(msg => msg.content !== "fajaedeAI+ is aan het denken..."),
-            { 
-              role: "assistant", 
-              content: errorMessage 
-            }
-          ]);
-        }).finally(() => {
-          // Zet de laadstatus pas uit NADAT de AI-promise is afgerond.
-          if (isFollowUp) {
-            setFollowUpLoading(false);
-          }
-        });
-      } else {
-        // Als er geen AI-verzoek is (bv. op andere tabs), zet loading direct uit.
-        if (isFollowUp) setFollowUpLoading(false);
-      }
-      
+        } else if (currentTab !== "all") {
+            // Verwijder de "denken..." placeholder als er geen AI-verzoek is
+            setChatHistory(prev => prev.filter(msg => msg.content !== "fajaedeAI+ is aan het denken..."));
+        }
+      }).catch(aiError => {
+        const message = aiError instanceof Error ? aiError.message : String(aiError);
+        console.error("AI summary failed:", message);
+        const errorMessage = message || "Sorry, de AI-samenvatting kon niet worden geladen.";
+        setChatHistory(prev => [
+          ...prev.filter(msg => msg.content !== "fajaedeAI+ is aan het denken..."),
+          { role: "assistant", content: `Fout: ${errorMessage}` }
+        ]);
+      });
+
+      // Wacht op beide voor follow-up queries om de laadstatus correct te beheren
+      await Promise.all([searchPromise, aiPromise]);
+
     } catch (err) {
-      // Verbeterde foutafhandeling om backend-details te tonen
-      let errorMessage = "An unknown error occurred.";
-      if (err instanceof Error) {
-        errorMessage = err.message;
-      } else if (typeof err === 'object' && err !== null && 'detail' in err) {
-        // Vang FastAPI's HTTPException { "detail": "..." } af
-        errorMessage = (err as { detail: string }).detail;
-      }
-      setError(errorMessage);
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      // Zorg ervoor dat de "denken..." placeholder wordt verwijderd bij een fout.
+      setChatHistory(prev => {
+        const filtered = prev.filter(msg => msg.content !== "fajaedeAI+ is aan het denken...");
+        // Voeg een foutmelding toe aan de chat als die er nog niet is.
+        if (!filtered.some(msg => msg.content.includes(errorMessage))) {
+          return [...filtered, { role: "assistant", content: `Fout: ${errorMessage}` }];
+        }
+        return filtered;
+      });
       // Zorg ervoor dat de laadstatus ook bij een fout wordt uitgezet.
       if (isFollowUp) setFollowUpLoading(false);
-    } finally {
-      // De algemene laadstatus voor de eerste zoekopdracht kan hier blijven.
       if (!isFollowUp) setLoading(false);
+    } finally {
+      if (isFollowUp) setFollowUpLoading(false);
     }
   }
   

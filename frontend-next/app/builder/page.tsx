@@ -12,11 +12,9 @@ type SiteBrief = {
 
 type BuilderResponse = {
   site_brief: SiteBrief;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  site_content: Record<string, any>; // Keeping this as any for now as the structure is highly dynamic
+  site_content: Record<string, unknown>; // Using unknown for better type safety
   html: string;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  validation_report: Record<string, any>;
+  validation_report: Record<string, unknown>;
 };
 
 export default function BuilderPage() {
@@ -36,6 +34,7 @@ export default function BuilderPage() {
     setError(null);
 
     try {
+      // Gebruik een relatief pad. De `rewrites` in next.config.js handelen de proxy naar de backend af.
       const res = await fetch(endpoint, {
         method: 'POST',
         headers: {

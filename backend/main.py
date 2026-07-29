@@ -7,6 +7,7 @@ import asyncio
 import io
 import hashlib
 from contextlib import asynccontextmanager
+import traceback
 from urllib.parse import urljoin, urlparse, urlunparse
 from urllib.robotparser import RobotFileParser
 
@@ -71,8 +72,9 @@ async def lifespan(fastapi_app: FastAPI):
             await fastapi_app.state.redis_client.ping()
             print("Redis client geïnitialiseerd en verbonden.")
         except redis.RedisError as e: # No change needed, already correct
-            print(f"Kon niet verbinden met Redis: {e}")
+            print(f"KRITISCH: Kon niet verbinden met Redis: {e}")
             fastapi_app.state.redis_client = None
+            raise RuntimeError(f"Could not connect to Redis: {e}") from e
 
     # Initialiseer de MeiliSearch client en maak deze beschikbaar in de app state.
     try:
@@ -89,13 +91,13 @@ async def lifespan(fastapi_app: FastAPI):
                 print("MeiliSearch index 'documents' niet gevonden, aanmaken...")
                 # Het aanmaken van een index is een asynchrone taak in MeiliSearch.
                 # We moeten wachten tot de taak voltooid is.
-                task_info = await client.create_index(uid="documents", primary_key="id")
-                task_uid = task_info["taskUid"]
+                task = await client.create_index(uid="documents", primary_key="id")
+                task_uid = task.task_uid
 
                 # Handmatig wachten tot de taak is voltooid, omdat wait_for_task niet bestaat.
                 while True:
                     task_status = await client.get_task(task_uid)
-                    if task_status["status"] in ("succeeded", "failed"):
+                    if task_status.status in ("succeeded", "failed"):
                         break
                     await asyncio.sleep(0.1) # Wacht 100ms voor de volgende controle
 
@@ -107,14 +109,14 @@ async def lifespan(fastapi_app: FastAPI):
                 # Configureer de zoekinstellingen voor de nieuwe index
                 settings_task = await fastapi_app.state.meili_index.update_settings({
                     "searchableAttributes": ["title", "content"],
-                    "filterableAttributes": ["url"],
+                    "filterableAttributes": ["url", "category"],
                 })
-                settings_uid = settings_task["taskUid"]
+                settings_uid = settings_task.task_uid
 
                 # Wacht ook op het toepassen van de instellingen.
                 while True:
                     task_status = await client.get_task(settings_uid)
-                    if task_status["status"] in ("succeeded", "failed"):
+                    if task_status.status in ("succeeded", "failed"):
                         break
                     await asyncio.sleep(0.1)
                 print("MeiliSearch indexinstellingen geconfigureerd.")
@@ -125,13 +127,17 @@ async def lifespan(fastapi_app: FastAPI):
     except (
         meili_errors.MeilisearchCommunicationError, httpx.ConnectError
     ) as e:
-        print(f"KRITISCH: Kon niet initialiseren of verbinden met MeiliSearch: {e}")
+        error_message = f"KRITISCH: Kon niet initialiseren of verbinden met MeiliSearch: {e}"
+        print(error_message)
         fastapi_app.state.meili_client = None
         fastapi_app.state.meili_index = None # Zorg ervoor dat de index ook None is
+        raise RuntimeError(error_message) from e
     except (TypeError, ValueError) as e: # Vang configuratie- of onverwachte fouten op
-        print(f"KRITISCH: Onverwachte fout bij MeiliSearch client initialisatie: {e}")
+        error_message = f"KRITISCH: Onverwachte fout bij MeiliSearch client initialisatie: {e}"
+        print(error_message)
         fastapi_app.state.meili_client = None
         fastapi_app.state.meili_index = None
+        raise RuntimeError(error_message) from e
 
     # Initialiseer de OpenAI client alleen als er een API key is
     if fastapi_app.state.openai_api_key:
@@ -196,18 +202,30 @@ def health_check():
 
 
 @app.get("/api/search")
-async def search(request: Request, q: str):
+async def search(request: Request, q: str, limit: int = 10, category: str = None):
     """Voert een zoekopdracht uit op de MeiliSearch index."""
+    meili_index = request.app.state.meili_index
+    if not meili_index:
+        raise HTTPException(
+            status_code=503, detail="Zoekservice is momenteel niet beschikbaar."
+        )
+
     if not q:
         return {"results": []}
 
-    # Voor de sitemap-generatie, die een lege query kan sturen.
-    # We retourneren hier de ruwe 'hits' zodat de sitemap de URL's kan verwerken.
-    limit = 1000 if request.headers.get("X-Sitemap-Request") else 10
+    # Gebruik de meegegeven limit, maar overschrijf voor sitemap-verzoeken.
+    search_limit = 1000 if request.headers.get("X-Sitemap-Request") else limit
 
     try:
-        search_results = await request.app.state.meili_index.search(q, {"limit": limit})
-        return {"results": search_results["hits"]}
+        if category:
+            # Escape single quotes in category value to prevent MeiliSearch errors.
+            safe_category = category.replace("'", "\\'")
+            search_results = await meili_index.search(
+                q, limit=search_limit, filter=[f"category = '{safe_category}'"]
+            )
+        else:
+            search_results = await meili_index.search(q, limit=search_limit)
+        return {"results": search_results.hits}
     except meili_errors.MeilisearchApiError as e:
         # Specifiek de 'index_not_found' fout afvangen voor een graceful fallback.
         if e.code == "index_not_found":
@@ -224,6 +242,12 @@ async def search(request: Request, q: str):
         raise HTTPException(
             status_code=503, detail="Zoekservice is momenteel niet beschikbaar."
         ) from e
+    except Exception as e: # Vang alle andere onverwachte fouten af
+        traceback.print_exc() # Print de volledige stack trace
+        print(f"Onverwachte fout in zoekopdracht: {e}")
+        raise HTTPException(
+            status_code=500, detail="Er is een onverwachte fout opgetreden bij het zoeken."
+        ) from e
 
 
 class Crawler:  # pylint: disable=too-few-public-methods
@@ -237,15 +261,16 @@ class Crawler:  # pylint: disable=too-few-public-methods
         # Gebruik een standaard browser User-Agent om 403 Forbidden-fouten te voorkomen.
         # Veel websites blokkeren onbekende of custom bot User-Agents.
         # De volgorde van headers kan ook van belang zijn voor botdetectie.
+        user_agent = (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/120.0.0.0 Safari/537.36"
+        )
         headers = {
-            "User-Agent": (
-                "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)"
-            ),
-            "Accept": (
-                "text/html,application/xhtml+xml,application/xml;q=0.9,"
-                "image/avif,image/webp,image/apng,*/*;q=0.8,"
-                "application/signed-exchange;v=b3;q=0.7"
-            ),
+            "User-Agent": user_agent,
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,"
+                      "image/avif,image/webp,image/apng,*/*;q=0.8,"
+                      "application/signed-exchange;v=b3;q=0.7",
             "Accept-Language": "nl-BE,nl;q=0.9,en-US;q=0.8,en;q=0.7",
             "Accept-Encoding": "gzip, deflate, br, zstd",
             "DNT": "1", # Do Not Track
@@ -343,22 +368,38 @@ class Crawler:  # pylint: disable=too-few-public-methods
             await self.redis.sadd("crawler:visited_urls", url)
 
             # Regel: Beleefdheidsvertraging
-            await asyncio.sleep(1.5)
+            await asyncio.sleep(5) # Verhoogd om 429 Too Many Requests te verminderen
 
             # Regel: Gebruik HEAD om content type te checken
-            head_res = await self.client.head(url, timeout=5)
-            head_res.raise_for_status()
+            # Implementeer een retry-mechanisme voor 429-fouten
+            max_retries = 3
+            for attempt in range(max_retries):
+                try:
+                    head_res = await self.client.head(url, timeout=10)
+                    head_res.raise_for_status()
+                    break  # Succes, verlaat de loop
+                except httpx.HTTPStatusError as e:
+                    if e.response.status_code == 429 and attempt < max_retries - 1:
+                        wait_time = 2 ** (attempt + 1)  # Exponentiële backoff: 2, 4, 8s
+                        print(
+                            f"429 Too Many Requests voor {url}. "
+                            f"Wacht {wait_time}s voor poging {attempt + 2}..."
+                        )
+                        await asyncio.sleep(wait_time)
+                    else:
+                        raise  # Geef de fout door na de laatste poging of bij andere HTTP-fouten
+            else: # Wordt uitgevoerd als de for-loop zonder 'break' eindigt
+                return # Stop verwerking als alle retries falen
             content_type = head_res.headers.get("Content-Type", "")
             content_length = int(head_res.headers.get("Content-Length", 0))
 
             # Bepaal het pad op basis van content type
             if "application/pdf" in content_type:
                 if content_length > 5 * 1024 * 1024: # 5MB limiet
-                    print(
-                        f"Overgeslagen (PDF te groot: {content_length / 1024 / 1024:.2f}MB): {url}"
-                    )
+                    print(f"Overgeslagen (PDF te groot: {content_length / 1024 / 1024:.2f}MB): {url}")
                     return
-                res = await self.client.get(url, timeout=30) # Langere timeout voor PDF's
+                # Langere timeout voor PDF's
+                res = await self.client.get(url, timeout=30)
                 res.raise_for_status()
                 await self._process_pdf(url, res.content)
                 return # Stop verdere verwerking voor PDF's
@@ -372,14 +413,33 @@ class Crawler:  # pylint: disable=too-few-public-methods
 
             soup = BeautifulSoup(res.content, "html.parser")
 
+            # Regel: Controleer op een canonieke URL.
+            # Als die er is en anders is dan de huidige URL, verwerk dan de canonieke URL.
+            canonical_link = soup.find("link", rel="canonical")
+            if canonical_link and canonical_link.get("href"):
+                canonical_url = urljoin(str(res.url), canonical_link["href"])
+                if canonical_url != url:
+                    print(
+                        f"Canonieke link gevonden voor {url} -> {canonical_url}"
+                    )
+                    # Voeg de canonieke URL toe aan de wachtrij om te verwerken.
+                    await self.redis.lpush("crawler:queue", canonical_url)
+                    return # Stop met het verwerken van de huidige (niet-canonieke) URL.
+
             # Variabele om bij te houden of we moeten indexeren.
             should_index = True
+            should_follow = True
 
             # Regel: Controleer op 'noindex' meta tag
             meta_robots = soup.find("meta", attrs={"name": "robots"})
-            if meta_robots and "noindex" in meta_robots.get("content", "").lower():
-                print(f"Niet indexeren ('noindex' tag): {url}")
-                should_index = False
+            if meta_robots:
+                content = meta_robots.get("content", "").lower()
+                if "noindex" in content:
+                    print(f"Niet indexeren ('noindex' tag): {url}")
+                    should_index = False
+                if "nofollow" in content:
+                    print(f"Links niet volgen ('nofollow' tag): {url}")
+                    should_follow = False
 
             if should_index:
                 # Regel: Controleer op dubbele content
@@ -405,12 +465,13 @@ class Crawler:  # pylint: disable=too-few-public-methods
                         "url": url,
                         "title": title,
                         "content": content,
-                    "structured_data": {},  # Nieuw veld voor gestructureerde data
+                        "structured_data": {},  # Nieuw veld voor gestructureerde data
                     }
 
                     # Concept: Zoek naar gestructureerde data (JSON-LD)
                     structured_data_list = []
-                    for script in soup.find_all("script", type="application/ld+json"):
+                    scripts = soup.find_all("script", type="application/ld+json")
+                    for script in scripts:
                         try:
                             if script.string:
                                 data = json.loads(script.string)
@@ -426,26 +487,34 @@ class Crawler:  # pylint: disable=too-few-public-methods
                     await self.meili_index.add_documents([document])
                     print(f"Geïndexeerd: {url}")
 
-            # Voeg altijd nieuwe links toe aan de wachtrij, zelfs als de pagina niet geïndexeerd is.
-            base_url = str(res.url) # Gebruik de uiteindelijke URL na redirects als basis
-            for link in soup.find_all("a", href=True):
-                href = link["href"]
-                # Normaliseer de URL door het fragment te verwijderen.
-                full_url = urljoin(base_url, href).split("#")[0]
+            # Voeg nieuwe links toe aan de wachtrij, tenzij 'nofollow' is ingesteld.
+            if should_follow:
+                base_url = str(res.url) # Gebruik de uiteindelijke URL na redirects als basis
+                for link in soup.find_all("a", href=True):
+                    href = link["href"]
+                    # Normaliseer de URL door het fragment te verwijderen.
+                    full_url = urljoin(base_url, href).split("#")[0]
 
-                # Valideer of de link binnen het toegestane domein valt.
-                link_netloc = urlparse(full_url).netloc
-                is_in_domain = (
-                    link_netloc == self.start_domain or link_netloc.endswith(f".{self.start_domain}")
-                )
+                    # Valideer of de link binnen het toegestane domein valt.
+                    link_netloc = urlparse(full_url).netloc
+                    is_in_domain = (
+                        link_netloc == self.start_domain
+                        or link_netloc.endswith(f".{self.start_domain}")
+                    )
 
-                if is_in_domain and not any(pattern in full_url for pattern in self.junk_url_patterns):
-                    if not await self.redis.sismember("crawler:visited_urls", full_url):
-                        await self.redis.lpush("crawler:queue", full_url)
+                    is_junk = any(p in full_url for p in self.junk_url_patterns)
+                    if is_in_domain and not is_junk:
+                        is_visited = await self.redis.sismember("crawler:visited_urls", full_url)
+                        if not is_visited:
+                            await self.redis.lpush("crawler:queue", full_url)
 
         except httpx.RequestError as e:
             print(f"Fout bij het crawlen van {url}: {e}")
         except (AttributeError, TypeError) as e:  # Vang parsing- of contentfouten af
+            # Voeg een traceback toe voor betere debugging van onverwachte contentfouten
+            print(f"Fout bij het verwerken van de content van {url}:")
+            traceback.print_exc()
+        except httpx.HTTPStatusError as e: # Vang specifiek HTTP status fouten af
             print(f"Fout bij het verwerken van de content van {url}: {e}")
         except (meili_errors.MeilisearchError, redis.RedisError) as e:
             # Vang specifieke fouten van MeiliSearch of Redis af
@@ -472,6 +541,9 @@ class Crawler:  # pylint: disable=too-few-public-methods
 
         crawled_count = 0
         while (url := await self.redis.rpop("crawler:queue")) and crawled_count < max_pages:
+            if await self.redis.get("crawler:stop_flag"):
+                print("Stopverzoek ontvangen, crawler wordt gestopt.")
+                break
             await self._process_page(url)
             crawled_count += 1
 
@@ -481,21 +553,21 @@ class Crawler:  # pylint: disable=too-few-public-methods
 @app.post("/api/crawl")
 async def start_crawl(request: Request, url: str, background_tasks: BackgroundTasks):
     """Endpoint om een nieuwe crawl-taak te starten op de achtergrond."""
+    # Controleer of de benodigde services beschikbaar zijn.
+    if not request.app.state.redis_client:
+        raise HTTPException(
+            status_code=503,
+            detail="Kan niet crawlen: Redis is niet beschikbaar.",
+        )
+    if not request.app.state.meili_index:
+        raise HTTPException(
+            status_code=503,
+            detail="Kan niet crawlen: MeiliSearch is niet beschikbaar.",
+        )
+
     # Probeer de lock te verkrijgen zonder te wachten.
     if not request.app.state.crawler_lock.locked():
         async with request.app.state.crawler_lock:
-            # Controleer of de benodigde services beschikbaar zijn.
-            if not request.app.state.redis_client:
-                raise HTTPException(
-                    status_code=503,
-                    detail="Kan niet crawlen: Redis is niet beschikbaar.",
-                )
-            if not request.app.state.meili_index:
-                raise HTTPException(
-                    status_code=503,
-                    detail="Kan niet crawlen: MeiliSearch is niet beschikbaar.",
-                )
-
             # Creëer en start de crawler.
             crawler = Crawler(
                 request.app.state.meili_index, request.app.state.redis_client
@@ -508,6 +580,70 @@ async def start_crawl(request: Request, url: str, background_tasks: BackgroundTa
         return {
             "message": "Een crawl-taak is al actief. Wacht tot deze is voltooid."
         }
+
+
+@app.post("/api/crawl/stop")
+async def stop_crawl(request: Request):
+    """Stelt een vlag in Redis in om de actieve crawler netjes te stoppen."""
+    redis_client = request.app.state.redis_client
+    if not redis_client:
+        raise HTTPException(status_code=503, detail="Redis is niet beschikbaar.")
+
+    # Stel een stop-vlag in met een timeout om te voorkomen dat deze permanent blijft.
+    await redis_client.set("crawler:stop_flag", "1", ex=3600)  # Vlag vervalt na 1 uur
+
+    return {
+        "message": "Stopverzoek verzonden. De crawler stopt na het verwerken van de huidige pagina."
+    }
+
+
+@app.post("/api/crawl/reset")
+async def reset_crawl(request: Request):
+    """Stopt de crawler en wist de wachtrij, bezochte URLs en de MeiliSearch-index."""
+    redis_client = request.app.state.redis_client
+    meili_index = request.app.state.meili_index
+
+    if not redis_client or not meili_index:
+        raise HTTPException(
+            status_code=503, detail="Redis of MeiliSearch is niet beschikbaar."
+        )
+
+    # 1. Stop de actieve crawler
+    await redis_client.set("crawler:stop_flag", "1", ex=60)
+
+    # 2. Wacht even om de lock vrij te geven als de crawler actief was
+    await asyncio.sleep(2)
+
+    # 3. Wis alle crawler-gerelateerde data in Redis
+    await redis_client.delete("crawler:queue", "crawler:visited_urls", "crawler:content_hashes")
+
+    # 4. Wis alle documenten in de MeiliSearch-index
+    await meili_index.delete_all_documents()
+
+    return {"message": "Crawler is gereset: wachtrij en zoekindex zijn leeggemaakt."}
+
+
+@app.get("/api/crawl/status")
+async def get_crawl_status(request: Request):
+    """Endpoint om de huidige status van de crawler op te vragen."""
+    redis_client = request.app.state.redis_client
+    if not redis_client:
+        raise HTTPException(
+            status_code=503,
+            detail="Kan de crawler-status niet ophalen: Redis is niet beschikbaar.",
+        )
+
+    is_running = request.app.state.crawler_lock.locked()
+    pages_in_queue = await redis_client.llen("crawler:queue")
+    pages_visited = await redis_client.scard("crawler:visited_urls")
+    content_hashes = await redis_client.scard("crawler:content_hashes")
+
+    return {
+        "status": "actief" if is_running else "inactief",
+        "pages_in_queue": pages_in_queue,
+        "pages_visited": pages_visited,
+        "unique_pages_indexed": content_hashes,
+    }
 
 
 def _prepare_chat_history(history: str = None) -> list[dict]:
@@ -534,33 +670,51 @@ def _prepare_chat_history(history: str = None) -> list[dict]:
 
 async def _fetch_context(request: Request, q: str) -> str:
     """Haal tot maximaal vijf zoekresultaten op en formatteer ze als context."""
+    meili_index = request.app.state.meili_index
+    if not meili_index:
+        raise HTTPException(
+            status_code=503, detail="Zoekservice is momenteel niet beschikbaar."
+        )
+
     try:
-        search_results = await request.app.state.meili_index.search(q, {"limit": 5})
-        hits = search_results.get("hits", [])
+        search_results = await meili_index.search(q, limit=5) # search_results is een SearchResults object
+        hits = search_results.hits # Toegang tot hits via attribuut, niet via dictionary sleutel
         parts: list[str] = []
         for i, hit in enumerate(hits):
             title = hit.get("title", "")
             summary = hit.get("summary", hit.get("content", ""))[:300]
             parts.append(f"Bron {i+1}: {title}\n{summary}")
         if not parts:
-            return ("Geen zoekresultaten gevonden. Beantwoord de vraag op basis van "
-                    "algemene kennis, maar vermeld dat er geen specifieke resultaten "
-                    "in de zoekindex beschikbaar zijn.")
+            return (
+                "Geen zoekresultaten gevonden. Beantwoord de vraag op basis van "
+                "algemene kennis, maar vermeld dat er geen specifieke resultaten "
+                "in de zoekindex beschikbaar zijn."
+            )
         return "\n\n".join(parts)
-    except Exception as e:
-        print(f"Fout bij ophalen context van MeiliSearch: {e}")
+    except meili_errors.MeilisearchApiError as e:
+        print(f"MeiliSearch API error in _fetch_context: {e}")
         raise HTTPException(
-            status_code=503,
-            detail="Kon geen zoekresultaten ophalen voor de AI‑samenvatting.",
+            status_code=503, detail="Kon geen zoekresultaten ophalen voor de AI‑samenvatting."
         ) from e
+    except (meili_errors.MeilisearchCommunicationError, httpx.RequestError) as e:
+        print(f"Error connecting to MeiliSearch in _fetch_context: {e}")
+        raise HTTPException(
+            status_code=503, detail="Kon geen zoekresultaten ophalen voor de AI‑samenvatting."
+        ) from e
+    except Exception as e:  # Catch any other unexpected errors
+        print(f"Onverwachte fout bij ophalen context van MeiliSearch: {e}")
+        detail_text = "Kon geen zoekresultaten ophalen voor de AI‑samenvatting."
+        raise HTTPException(status_code=503, detail=detail_text) from e
 
 
 def _build_system_prompt() -> str:
     """Return the static system prompt used for AI‑samenvatting."""
-    part1 = ("Je bent een AI-assistent die vragen beantwoordt op basis van "
-             "genummerde zoekresultaten. Jouw taak is om de vraag van de "
-             "gebruiker te beantwoorden door de verstrekte context samen te vatten. "
-             "Houd je aan de volgende regels:\n")
+    part1 = (
+        "Je bent een AI-assistent die vragen beantwoordt op basis van "
+        "genummerde zoekresultaten. Jouw taak is om de vraag van de "
+        "gebruiker te beantwoorden door de verstrekte context samen te vatten. "
+        "Houd je aan de volgende regels:\n" # noqa: E501
+    )
     part2 = (
         "1. Baseer je antwoord UITSLUITEND op de informatie in de 'Context'. "
         "Verzin geen informatie.\n"
@@ -569,9 +723,9 @@ def _build_system_prompt() -> str:
     )
     part3 = (
         "3. Structureer je antwoord als een FAQ of How‑To als de context dit "
-        "toelaat. Gebruik Markdown.\n"
-        "4. Voeg aan het einde van ELKE zin een citaat toe met de bronnummers. "
-        "Bijvoorbeeld: 'Dit is een feit. [1, 3]'\n"
+        "toelaat. Gebruik Markdown.\n" # noqa: E501
+        "4. Voeg aan het einde van ELKE zin een citaat toe met de bronnummers. " # noqa: E501
+        "Bijvoorbeeld: 'Dit is een feit. [1, 3]'\n" # noqa: E501
     )
     part4 = ("5. Combineer citaten. Bijvoorbeeld: [1, 2].\n"
              "6. Schrijf in een heldere, feitelijke en neutrale toon.\n"
@@ -581,10 +735,11 @@ def _build_system_prompt() -> str:
 
 def _build_user_prompt(context: str, q: str) -> str:
     """Compose the user prompt incorporating context and question."""
-    return (
+    prompt_text = (
         f"Context:\n---\n{context}\n---\n\n"
-        f"Beantwoord de volgende vraag op basis van bovenstaande context:\n{q}"
-    )
+        "Beantwoord de volgende vraag op basis van bovenstaande context:\n"
+        f"{q}")
+    return prompt_text
 
 
 @app.get("/api/summarize")
@@ -600,6 +755,12 @@ async def summarize(
     """
     if not q:
         return {"ai": "Stel een vraag om een AI‑samenvatting te krijgen."}
+
+    # Controleer of de OpenAI client beschikbaar is.
+    if not hasattr(request.app.state, "openai_client") or not request.app.state.openai_client:
+        raise HTTPException(
+            status_code=503, detail="AI-dienst is momenteel niet beschikbaar."
+        )
 
     # 1. Context ophalen via MeiliSearch
     context = await _fetch_context(request, q)

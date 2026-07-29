@@ -6,6 +6,8 @@
 # Python
 /.venv/
 /api/venv/
+/.venv2/
+/venv1/
 __pycache__/
 *.pyc
 *.pyo
@@ -23,6 +25,7 @@ venv/
 # Local secrets and config
 *.env
 .env.*
+.env.local
 
 # Data stores - NOOIT committen!
 /ollama_data/
