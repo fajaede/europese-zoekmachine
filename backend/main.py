@@ -30,6 +30,7 @@ from meilisearch_python_async import (
     Client as AsyncMeiliClient,
     errors as meili_errors,
 )
+from pydantic import BaseModel
 from dotenv import load_dotenv
 
 # Local application imports
@@ -550,8 +551,12 @@ class Crawler:  # pylint: disable=too-few-public-methods
         print("Crawl-sessie voltooid.")
 
 
+class CrawlRequest(BaseModel):
+    """Request body model for starting a crawl."""
+    url: str
+
 @app.post("/api/crawl")
-async def start_crawl(request: Request, url: str, background_tasks: BackgroundTasks):
+async def start_crawl(crawl_request: CrawlRequest, request: Request, background_tasks: BackgroundTasks):
     """Endpoint om een nieuwe crawl-taak te starten op de achtergrond."""
     # Controleer of de benodigde services beschikbaar zijn.
     if not request.app.state.redis_client:
@@ -573,8 +578,8 @@ async def start_crawl(request: Request, url: str, background_tasks: BackgroundTa
                 request.app.state.meili_index, request.app.state.redis_client
             )
             request.app.state.crawler_instance = crawler
-            background_tasks.add_task(crawler.run, url)
-            return {"message": f"Crawl-taak voor {url} is gestart."}
+            background_tasks.add_task(crawler.run, crawl_request.url)
+            return {"message": f"Crawl-taak voor {crawl_request.url} is gestart."}
     else:
         # Als de lock al bezet is, is er al een crawl-taak actief.
         return {
