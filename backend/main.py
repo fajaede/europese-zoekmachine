@@ -366,7 +366,7 @@ class Crawler:  # pylint: disable=too-few-public-methods
             await self.redis.sadd("crawler:visited_urls", url)
 
             # Regel: Beleefdheidsvertraging
-            await asyncio.sleep(10) # Verhoogd om 429 Too Many Requests te verminderen
+            await asyncio.sleep(15) # Verhoogd om 429 Too Many Requests te verminderen
 
             # Regel: Gebruik HEAD om content type te checken
             # Implementeer een retry-mechanisme voor 429-fouten
@@ -391,10 +391,15 @@ class Crawler:  # pylint: disable=too-few-public-methods
                             f"Wacht {wait_time}s voor poging {attempt + 2}..."
                         )
                         await asyncio.sleep(wait_time)
+                    elif e.response.status_code == 429 and attempt == max_retries - 1:
+                        # Na de laatste poging, voeg de URL achteraan de wachtrij toe.
+                        print(f"429 Fout na alle pogingen. URL {url} wordt achteraan de wachtrij geplaatst.")
+                        await self.redis.lpush("crawler:queue", url)
+                        return # Stop de huidige verwerking voor deze URL
                     else:
                         raise # Geef de fout door na de laatste poging of bij andere HTTP-fouten
             else: # Wordt uitgevoerd als de for-loop zonder 'break' eindigt
-                return # Stop verwerking als alle retries falen
+                return # Stop verwerking als alle retries falen, bv. na een 429
             content_type = head_res.headers.get("Content-Type", "")
             content_length = int(head_res.headers.get("Content-Length", 0))
 
