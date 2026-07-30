@@ -505,6 +505,15 @@ class Crawler:  # pylint: disable=too-few-public-methods
                     # Normaliseer de URL door het fragment te verwijderen.
                     full_url = urljoin(base_url, href).split("#")[0]
 
+                    # Regel: Volg alleen HTTP/HTTPS links en negeer andere schema's (mailto:, tel:, etc.)
+                    if not full_url.startswith(("http://", "https://")):
+                        continue
+
+                    # Regel: Sla links over die eindigen op ongewenste bestandsextensies.
+                    excluded_extensions = (".zip", ".xml", ".pdf", ".docx", ".xlsx", ".pptx", ".epub", ".mobi")
+                    if full_url.lower().endswith(excluded_extensions):
+                        continue
+
                     # Valideer of de link binnen het toegestane domein valt.
                     link_netloc = urlparse(full_url).netloc
                     is_in_domain = (
@@ -703,11 +712,9 @@ async def _fetch_context(request: Request, q: str) -> str:
             summary = hit.get("summary", hit.get("content", ""))[:300]
             parts.append(f"Bron {i+1}: {title}\n{summary}")
         if not parts:
-            return (
-                "Geen zoekresultaten gevonden. Beantwoord de vraag op basis van "
-                "algemene kennis, maar vermeld dat er geen specifieke resultaten "
-                "in de zoekindex beschikbaar zijn."
-            )
+            # Geef een lege context terug als er geen resultaten zijn.
+            # De LLM zal dan de instructie volgen om aan te geven dat er niets is gevonden.
+            return ""
         return "\n\n".join(parts)
     except meili_errors.MeilisearchApiError as e:
         print(f"MeiliSearch API error in _fetch_context: {e}")
