@@ -27,4 +27,4 @@ ENV PYTHONPATH "${PYTHONPATH}:/app"
 EXPOSE 18000
 
 # Het commando om de applicatie te starten wanneer de container wordt gestart
-CMD ["gunicorn", "-k", "uvicorn.workers.UvicornWorker", "-w", "4", "-b", "0.0.0.0:18000", "main:app"]
+CMD ["gunicorn", "-k", "uvicorn.workers.UvicornWorker", "-w", "2", "-b", "0.0.0.0:18000", "main:app"]

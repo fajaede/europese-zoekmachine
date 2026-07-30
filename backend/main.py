@@ -369,7 +369,7 @@ class Crawler:  # pylint: disable=too-few-public-methods
             await self.redis.sadd("crawler:visited_urls", url)
 
             # Regel: Beleefdheidsvertraging
-            await asyncio.sleep(5) # Verhoogd om 429 Too Many Requests te verminderen
+            await asyncio.sleep(10) # Verhoogd om 429 Too Many Requests te verminderen
 
             # Regel: Gebruik HEAD om content type te checken
             # Implementeer een retry-mechanisme voor 429-fouten
@@ -381,14 +381,21 @@ class Crawler:  # pylint: disable=too-few-public-methods
                     break  # Succes, verlaat de loop
                 except httpx.HTTPStatusError as e:
                     if e.response.status_code == 429 and attempt < max_retries - 1:
-                        wait_time = 2 ** (attempt + 1)  # Exponentiële backoff: 2, 4, 8s
+                        # Probeer de Retry-After header te lezen die de server stuurt
+                        retry_after = e.response.headers.get("Retry-After")
+                        if retry_after and retry_after.isdigit():
+                            wait_time = int(retry_after)
+                        else:
+                            # Fallback naar exponentiële backoff als de header er niet is
+                            wait_time = 15 * (attempt + 1)
+
                         print(
                             f"429 Too Many Requests voor {url}. "
                             f"Wacht {wait_time}s voor poging {attempt + 2}..."
                         )
                         await asyncio.sleep(wait_time)
                     else:
-                        raise  # Geef de fout door na de laatste poging of bij andere HTTP-fouten
+                        raise # Geef de fout door na de laatste poging of bij andere HTTP-fouten
             else: # Wordt uitgevoerd als de for-loop zonder 'break' eindigt
                 return # Stop verwerking als alle retries falen
             content_type = head_res.headers.get("Content-Type", "")
@@ -533,6 +540,9 @@ class Crawler:  # pylint: disable=too-few-public-methods
             self.start_domain = netloc[4:]
         else:
             self.start_domain = netloc
+
+        # Zorg ervoor dat een eventuele oude stop-vlag wordt verwijderd bij een nieuwe start.
+        await self.redis.delete("crawler:stop_flag")
 
         # Voeg de start_url toe aan de wachtrij als deze leeg is
         if await self.redis.llen("crawler:queue") == 0:
