@@ -147,9 +147,6 @@ async def lifespan(fastapi_app: FastAPI):
         )
         print("OpenAI client geïnitialiseerd.")
 
-    # Initialiseer een lock en een placeholder voor de crawler-instantie
-    fastapi_app.state.crawler_lock = asyncio.Lock()
-    fastapi_app.state.crawler_instance = None
 
     yield
 
@@ -533,32 +530,37 @@ class Crawler:  # pylint: disable=too-few-public-methods
 
     async def run(self, start_url: str, max_pages: int = 250000):
         """Start het crawlproces vanaf een begin-URL."""
-        # Bepaal het hoofddomein voor de scope van de crawl
-        # Strip 'www.' to crawl all subdomains of the root domain.
-        netloc = urlparse(start_url).netloc
-        if netloc.startswith("www."):
-            self.start_domain = netloc[4:]
-        else:
-            self.start_domain = netloc
+        try:
+            # Stel de 'is_running' vlag in Redis in
+            await self.redis.set("crawler:is_running", "1", ex=3600) # Vlag vervalt na 1 uur
 
-        # Zorg ervoor dat een eventuele oude stop-vlag wordt verwijderd bij een nieuwe start.
-        await self.redis.delete("crawler:stop_flag")
+            # Bepaal het hoofddomein voor de scope van de crawl
+            netloc = urlparse(start_url).netloc
+            if netloc.startswith("www."):
+                self.start_domain = netloc[4:]
+            else:
+                self.start_domain = netloc
 
-        # Voeg de start_url toe aan de wachtrij als deze leeg is
-        if await self.redis.llen("crawler:queue") == 0:
-            await self.redis.lpush("crawler:queue", start_url)
+            # Zorg ervoor dat een eventuele oude stop-vlag wordt verwijderd bij een nieuwe start.
+            await self.redis.delete("crawler:stop_flag")
 
-        print(f"Crawler gestart voor {start_url} met een limiet van {max_pages} pagina's.")
+            # Voeg de start_url toe aan de wachtrij als deze leeg is
+            if await self.redis.llen("crawler:queue") == 0:
+                await self.redis.lpush("crawler:queue", start_url)
 
-        crawled_count = 0
-        while (url := await self.redis.rpop("crawler:queue")) and crawled_count < max_pages:
-            if await self.redis.get("crawler:stop_flag"):
-                print("Stopverzoek ontvangen, crawler wordt gestopt.")
-                break
-            await self._process_page(url)
-            crawled_count += 1
+            print(f"Crawler gestart voor {start_url} met een limiet van {max_pages} pagina's.")
 
-        print("Crawl-sessie voltooid.")
+            crawled_count = 0
+            while (url := await self.redis.rpop("crawler:queue")) and crawled_count < max_pages:
+                if await self.redis.get("crawler:stop_flag"):
+                    print("Stopverzoek ontvangen, crawler wordt gestopt.")
+                    break
+                await self._process_page(url)
+                crawled_count += 1
+        finally:
+            # Verwijder de 'is_running' vlag, ongeacht of de crawl succesvol was of crashte.
+            await self.redis.delete("crawler:is_running")
+            print("Crawl-sessie voltooid.")
 
 
 class CrawlRequest(BaseModel):
@@ -580,22 +582,18 @@ async def start_crawl(crawl_request: CrawlRequest, request: Request, background_
             detail="Kan niet crawlen: MeiliSearch is niet beschikbaar.",
         )
 
-    # Probeer de lock te verkrijgen zonder te wachten.
-    if not request.app.state.crawler_lock.locked():
-        async with request.app.state.crawler_lock:
-            # Creëer en start de crawler.
-            crawler = Crawler(
-                request.app.state.meili_index, request.app.state.redis_client
-            )
-            request.app.state.crawler_instance = crawler
-            background_tasks.add_task(crawler.run, crawl_request.url)
-            return {"message": f"Crawl-taak voor {crawl_request.url} is gestart."}
-    else:
-        # Als de lock al bezet is, is er al een crawl-taak actief.
+    # Controleer of de 'is_running' vlag al in Redis staat.
+    if await request.app.state.redis_client.get("crawler:is_running"):
         return {
             "message": "Een crawl-taak is al actief. Wacht tot deze is voltooid."
         }
 
+    # Creëer en start de crawler.
+    crawler = Crawler(
+        request.app.state.meili_index, request.app.state.redis_client
+    )
+    background_tasks.add_task(crawler.run, crawl_request.url)
+    return {"message": f"Crawl-taak voor {crawl_request.url} is gestart."}
 
 @app.post("/api/crawl/stop")
 async def stop_crawl(request: Request):
@@ -648,7 +646,7 @@ async def get_crawl_status(request: Request):
             detail="Kan de crawler-status niet ophalen: Redis is niet beschikbaar.",
         )
 
-    is_running = request.app.state.crawler_lock.locked()
+    is_running = await redis_client.get("crawler:is_running") == "1"
     pages_in_queue = await redis_client.llen("crawler:queue")
     pages_visited = await redis_client.scard("crawler:visited_urls")
     content_hashes = await redis_client.scard("crawler:content_hashes")
