@@ -5,27 +5,38 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  // Vertel Turbopack wat de root van het project is om de waarschuwing
-  // over meerdere lockfiles te onderdrukken.
-  // We stellen dit in op de huidige map (de root van de Next.js app).
+  images: {
+    remotePatterns: [
+      {
+        protocol: 'https',
+        hostname: 'image.thum.io',
+      },
+      {
+        protocol: 'https',
+        hostname: 'images.unsplash.com',
+      },
+    ],
+  },
+
   experimental: {
+    // Deze instelling vertelt Next.js waar het moet beginnen met het zoeken naar
+    // bestanden die nodig zijn voor de build. In een monorepo-structuur
+    // moet dit verwijzen naar de root van de hele repository.
+    outputFileTracingRoot: path.join(__dirname, '../../'),
+
+    // Stel de root voor Turbopack expliciet in op dezelfde waarde om de
+    // waarschuwing 'Both outputFileTracingRoot and turbopack.root are set'
+    // op te lossen.
     turbopack: {
-      root: __dirname,
+      root: path.join(__dirname, '../../'),
     },
   },
-  // Asynchrone rewrites om API-verzoeken te proxyen.
-  // Dit zorgt ervoor dat de frontend (op poort 3000) kan communiceren
-  // met de backend (op poort 18000) zonder CORS-problemen.
-  async rewrites() {
-    // Bepaal de doel-URL voor de API.
-    // Gebruik de omgevingsvariabele API_URL als deze is ingesteld,
-    // anders val terug op de lokale ontwikkelserver.
-    const apiUrl = process.env.API_URL || 'http://127.0.0.1:18000';
 
+  async rewrites() {
     return [
       {
         source: '/api/:path*',
-        destination: `${apiUrl}/api/:path*`,
+        destination: `${process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:18000'}/api/:path*`,
       },
     ];
   },
