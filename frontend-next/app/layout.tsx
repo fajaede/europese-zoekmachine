@@ -12,7 +12,7 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
-const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || "https://fajaede-search-frontend.vercel.app";
+const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || "https://fajaede.eu";
 
 export const metadata: Metadata = {
   title: "fajaedeseo AI",

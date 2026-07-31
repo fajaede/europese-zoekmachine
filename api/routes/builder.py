@@ -1,9 +1,9 @@
 """API routes for the website builder functionality."""
 
 import logging
-from typing import Dict, Any, Literal
+from typing import Dict, Any
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field  # pylint: disable=no-name-in-module
+from pydantic import BaseModel, Field
 
 # Use absolute imports from the 'api' root for better clarity and linter compatibility.
 from api.routes.dependencies import get_website_generator
@@ -20,16 +20,20 @@ class BuilderRequest(BaseModel):
         min_length=10,
         description="A description of the business or website.",
     )
-    styleVariant: Literal["seo_ai_product", "minimal"] = Field(
-        default="seo_ai_product",
-        description="The visual style variant for the website."
+    # Velden aangepast om overeen te komen met het frontend formulier
+    site_type: str = Field(
+        "general_business",
+        description="The type of website (e.g., 'restaurant', 'law_firm').",
     )
-    language: str = Field(
-        default="nl",
-        description="The language for the website content (e.g., 'nl', 'en')."
+    industry: str = Field(
+        "", description="The industry or sector of the business."
+    )
+    style: str = Field(
+        "modern",
+        description="The desired design style (e.g., 'minimalist', 'luxury').",
     )
 
-@router.post("/builder/generate")
+@router.post("/generate")
 async def generate(
     request: BuilderRequest,
     service: WebsiteGeneratorService = Depends(get_website_generator),

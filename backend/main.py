@@ -183,9 +183,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Integreer de SEO-generator route
-app.include_router(seo_router)
-app.include_router(builder_router)
+# Integreer de routers met de juiste prefixes
+app.include_router(seo_router, prefix="/api/seo", tags=["SEO Generator"])
+app.include_router(builder_router, prefix="/api/builder", tags=["Website Builder"])
 
 @app.get("/")
 def read_root():
@@ -211,18 +211,25 @@ async def search(request: Request, q: str, limit: int = 10, category: str = None
     if not q:
         return {"results": []}
 
-    # Gebruik de meegegeven limit, maar overschrijf voor sitemap-verzoeken.
-    search_limit = 1000 if request.headers.get("X-Sitemap-Request") else limit
+    is_sitemap_request = request.headers.get("X-Sitemap-Request") == "true"
+    search_limit = 1000 if is_sitemap_request else limit
+
+    search_params = {"limit": search_limit}
+    if is_sitemap_request:
+        # Voor sitemap-verzoeken hebben we alleen de URL en publicatiedatum nodig.
+        # Dit vermindert de payload en de belasting op MeiliSearch.
+        search_params["attributes_to_retrieve"] = ["url", "published_at"]
 
     try:
         if category:
             # Escape single quotes in category value to prevent MeiliSearch errors.
             safe_category = category.replace("'", "\\'")
+            search_params["filter"] = [f"category = '{safe_category}'"]
             search_results = await meili_index.search(
-                q, limit=search_limit, filter=[f"category = '{safe_category}'"]
+                q, **search_params
             )
         else:
-            search_results = await meili_index.search(q, limit=search_limit)
+            search_results = await meili_index.search(q, **search_params)
         return {"results": search_results.hits}
     except meili_errors.MeilisearchApiError as e:
         # Specifiek de 'index_not_found' fout afvangen voor een graceful fallback.
@@ -358,7 +365,9 @@ class Crawler:  # pylint: disable=too-few-public-methods
         try:
             # Regel: Respecteer robots.txt
             robot_parser = await self._get_robot_parser(url)
-            if not robot_parser.can_fetch(self.client.headers["User-Agent"], url):
+            if not robot_parser.can_fetch(
+                self.client.headers["User-Agent"], url
+            ):
                 print(f"Uitgesloten door robots.txt: {url}")
                 return
 
@@ -387,26 +396,32 @@ class Crawler:  # pylint: disable=too-few-public-methods
                             wait_time = 15 * (attempt + 1)
 
                         print(
-                            f"429 Too Many Requests voor {url}. "
-                            f"Wacht {wait_time}s voor poging {attempt + 2}..."
-                        )
+                            f"429 Too Many Requests voor {url}. Wacht {wait_time}s "
+                            f"voor poging {attempt + 2}...")
                         await asyncio.sleep(wait_time)
                     elif e.response.status_code == 429 and attempt == max_retries - 1:
                         # Na de laatste poging, voeg de URL achteraan de wachtrij toe.
-                        print(f"429 Fout na alle pogingen. URL {url} wordt achteraan de wachtrij geplaatst.")
+                        print(
+                            f"429 Fout na alle pogingen. URL {url} wordt "
+                            "achteraan de wachtrij geplaatst."
+                        )
                         await self.redis.lpush("crawler:queue", url)
                         return # Stop de huidige verwerking voor deze URL
                     else:
                         raise # Geef de fout door na de laatste poging of bij andere HTTP-fouten
-            else: # Wordt uitgevoerd als de for-loop zonder 'break' eindigt
+            else:  # Wordt uitgevoerd als de for-loop zonder 'break' eindigt
                 return # Stop verwerking als alle retries falen, bv. na een 429
             content_type = head_res.headers.get("Content-Type", "")
             content_length = int(head_res.headers.get("Content-Length", 0))
 
             # Bepaal het pad op basis van content type
             if "application/pdf" in content_type:
+                # 5MB limiet voor PDF's
                 if content_length > 5 * 1024 * 1024: # 5MB limiet
-                    print(f"Overgeslagen (PDF te groot: {content_length / 1024 / 1024:.2f}MB): {url}")
+                    print(
+                        f"Overgeslagen (PDF te groot: "
+                        f"{content_length / 1024 / 1024:.2f}MB): {url}"
+                    )
                     return
                 # Langere timeout voor PDF's
                 res = await self.client.get(url, timeout=30)
@@ -454,7 +469,7 @@ class Crawler:  # pylint: disable=too-few-public-methods
             if should_index:
                 # Regel: Controleer op dubbele content
                 if await self._is_duplicate(soup):
-                    print(f"Overgeslagen (dubbele content): {url}")
+                    print(f"Overgeslagen (dubbel): {url}")
                     should_index = False
 
             if should_index:
@@ -505,28 +520,28 @@ class Crawler:  # pylint: disable=too-few-public-methods
                     # Normaliseer de URL door het fragment te verwijderen.
                     full_url = urljoin(base_url, href).split("#")[0]
 
-                    # Regel: Volg alleen HTTP/HTTPS links en negeer andere schema's (mailto:, tel:, etc.)
+                    # Regel: Volg alleen HTTP/HTTPS links en negeer andere schema's
+                    # (mailto:, tel:, etc.)
                     if not full_url.startswith(("http://", "https://")):
                         continue
 
                     # Regel: Sla links over die eindigen op ongewenste bestandsextensies.
-                    excluded_extensions = (".zip", ".xml", ".pdf", ".docx", ".xlsx", ".pptx", ".epub", ".mobi")
+                    excluded_extensions = (".zip", ".xml", ".pdf", ".docx", ".xlsx",
+                                           ".pptx", ".epub", ".mobi")
                     if full_url.lower().endswith(excluded_extensions):
                         continue
 
                     # Valideer of de link binnen het toegestane domein valt.
                     link_netloc = urlparse(full_url).netloc
-                    is_in_domain = (
-                        link_netloc == self.start_domain
-                        or link_netloc.endswith(f".{self.start_domain}")
-                    )
+                    is_in_domain = link_netloc == self.start_domain or \
+                                   link_netloc.endswith(f".{self.start_domain}")
 
                     is_junk = any(p in full_url for p in self.junk_url_patterns)
                     if is_in_domain and not is_junk:
-                        is_visited = await self.redis.sismember("crawler:visited_urls", full_url)
+                        is_visited = await self.redis.sismember("crawler:visited_urls",
+                                                                full_url)
                         if not is_visited:
                             await self.redis.lpush("crawler:queue", full_url)
-
         except httpx.RequestError as e:
             print(f"Fout bij het crawlen van {url}: {e}")
         except (AttributeError, TypeError) as e:  # Vang parsing- of contentfouten af
@@ -582,7 +597,11 @@ class CrawlRequest(BaseModel):
     url: str
 
 @app.post("/api/crawl")
-async def start_crawl(crawl_request: CrawlRequest, request: Request, background_tasks: BackgroundTasks):
+async def start_crawl(
+    crawl_request: CrawlRequest,
+    request: Request,
+    background_tasks: BackgroundTasks,
+):
     """Endpoint om een nieuwe crawl-taak te starten op de achtergrond."""
     # Controleer of de benodigde services beschikbaar zijn.
     if not request.app.state.redis_client:
@@ -620,7 +639,8 @@ async def stop_crawl(request: Request):
     await redis_client.set("crawler:stop_flag", "1", ex=3600)  # Vlag vervalt na 1 uur
 
     return {
-        "message": "Stopverzoek verzonden. De crawler stopt na het verwerken van de huidige pagina."
+        "message": ("Stopverzoek verzonden. De crawler stopt na het verwerken "
+                    "van de huidige pagina.")
     }
 
 
@@ -685,7 +705,8 @@ def _prepare_chat_history(history: str = None) -> list[dict]:
 
     chat_history = []
     for msg in raw_history:
-        is_valid_role = isinstance(msg, dict) and msg.get("role") in [
+        is_valid_role = isinstance(msg, dict) and \
+                        msg.get("role") in [
             "user", "assistant"
         ]
         is_thinking_placeholder = (msg.get("content") ==
@@ -704,8 +725,9 @@ async def _fetch_context(request: Request, q: str) -> str:
         )
 
     try:
-        search_results = await meili_index.search(q, limit=5) # search_results is een SearchResults object
-        hits = search_results.hits # Toegang tot hits via attribuut, niet via dictionary sleutel
+        # search_results is een SearchResults object
+        search_results = await meili_index.search(q, limit=5)
+        hits = search_results.hits  # Toegang tot hits via attribuut
         parts: list[str] = []
         for i, hit in enumerate(hits):
             title = hit.get("title", "")
@@ -746,12 +768,10 @@ def _build_system_prompt() -> str:
         "2. Als de context geen antwoord bevat, zeg dan: 'De zoekresultaten "
         "bevatten onvoldoende informatie om deze vraag te beantwoorden.'\n"
     )
-    part3 = (
-        "3. Structureer je antwoord als een FAQ of How‑To als de context dit "
-        "toelaat. Gebruik Markdown.\n" # noqa: E501
-        "4. Voeg aan het einde van ELKE zin een citaat toe met de bronnummers. " # noqa: E501
-        "Bijvoorbeeld: 'Dit is een feit. [1, 3]'\n" # noqa: E501
-    )
+    part3 = ("3. Structureer je antwoord als een FAQ of How‑To als de context dit toelaat. "
+             "Gebruik Markdown.\n"
+             "4. Voeg aan het einde van ELKE zin een citaat toe met de bronnummers. "
+             "Bijvoorbeeld: 'Dit is een feit. [1, 3]'\n")
     part4 = ("5. Combineer citaten. Bijvoorbeeld: [1, 2].\n"
              "6. Schrijf in een heldere, feitelijke en neutrale toon.\n"
              "7. Antwoord altijd in de taal van de vraag van de gebruiker.")

@@ -51,12 +51,34 @@ export default function BuilderPage() {
       const data = await res.json();
 
       if (!res.ok) {
-        setError(data.error ?? 'Er is een fout opgetreden bij het genereren.');
+        // Verbeterde foutafhandeling om specifieke FastAPI-validatiefouten te tonen
+        let errorMessage = 'Er is een onbekende fout opgetreden bij het genereren.';
+        if (data.detail) {
+          // FastAPI validatiefouten zitten vaak in data.detail
+          errorMessage =
+            typeof data.detail === 'string' ? data.detail : JSON.stringify(data.detail);
+        }
+        setError(errorMessage);
         setResult(null);
         return;
       }
 
       setResult(data as BuilderResponse);
+
+      // === NIEUWE INTEGRATIESTAP ===
+      // Als er een URL is in de site_content, start dan automatisch een crawl-taak.
+      // We gaan ervan uit dat de backend een 'url' veld teruggeeft.
+      const siteUrl = (data.site_content as { url?: string })?.url;
+      if (siteUrl) {
+        console.log(`Nieuwe site gegenereerd, crawl starten voor: ${siteUrl}`);
+        // Stuur een verzoek naar de crawl-endpoint zonder te wachten op het resultaat.
+        fetch('/api/crawl', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url: siteUrl }),
+        }).catch(crawlError => console.error("Kon de automatische crawl-taak niet starten:", crawlError));
+      }
+      // === EINDE INTEGRATIESTAP ===
     } catch (err: unknown) {
       if (err instanceof Error) {
         setError(err.message);
@@ -130,10 +152,11 @@ export default function BuilderPage() {
             <form onSubmit={(e) => handleSubmit(e, '/api/builder/generate')} className="flex flex-col gap-5">
               {/* Site Type */}
               <div className="flex flex-col">
-                <label className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">
+                <label htmlFor="siteType" className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">
                   Type Website
                 </label>
                 <select
+                  id="siteType"
                   name="siteType"
                   value={siteType}
                   onChange={(e) => setSiteType(e.target.value)}
@@ -150,11 +173,12 @@ export default function BuilderPage() {
 
               {/* Industry */}
               <div className="flex flex-col">
-                <label className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">
+                <label htmlFor="industry" className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">
                   Sector / Branche
                 </label>
                 <input
                   type="text"
+                  id="industry"
                   name="industry"
                   value={industry}
                   onChange={(e) => setIndustry(e.target.value)}
@@ -166,11 +190,12 @@ export default function BuilderPage() {
 
               {/* Style */}
               <div className="flex flex-col">
-                <label className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">
+                <label htmlFor="style" className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">
                   Design Stijl
                 </label>
                 <input
                   type="text"
+                  id="style"
                   name="style"
                   value={style}
                   onChange={(e) => setStyle(e.target.value)}
@@ -182,10 +207,11 @@ export default function BuilderPage() {
 
               {/* Description */}
               <div className="flex flex-col">
-                <label className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">
+                <label htmlFor="description" className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">
                   Bedrijfsbeschrijving
                 </label>
                 <textarea
+                  id="description"
                   name="description"
                   value={description}
                   onChange={(e) => setDescription(e.target.value)}
@@ -236,7 +262,7 @@ export default function BuilderPage() {
                 </button>
                 <button
                   type="button"
-                  onClick={(e) => handleSubmit(e, '/api/builder/generate-medium')}
+                  onClick={(e) => handleSubmit(e, '/api/builder/generate')}
                   disabled={loading}
                   className="w-full bg-slate-700 hover:bg-slate-600 text-white font-bold py-2.5 px-6 rounded-full shadow-sm disabled:bg-slate-400 transition-all flex items-center justify-center gap-2 cursor-pointer text-xs"
                 >
@@ -329,24 +355,27 @@ export default function BuilderPage() {
                 ) : (
                   <>
                     {/* Active Preview */}
-                    {viewMode === 'preview' ? (
+                    {viewMode === 'preview' && (
                       <iframe
                         title="Website preview"
                         srcDoc={result.html}
-                        sandbox="allow-same-origin"
+                        sandbox="allow-scripts allow-forms allow-popups allow-modals"
                         className="w-full h-full border-none bg-white"
                       />
-                    ) : (
-                      /* Active Code View */
+                    )}
+                    {/* Active Code View */}
+                    {viewMode === 'html' && (
                       <pre className="w-full h-full bg-slate-950 text-slate-200 p-6 overflow-auto text-xs md:text-sm font-mono leading-relaxed select-text">
                         <code>{result.html}</code>
                       </pre>
                     )}
                     {/* Active Briefing View */}
                     {viewMode === 'brief' && (
-                      <pre className="w-full h-full bg-slate-50 text-slate-800 p-6 overflow-auto text-xs md:text-sm font-mono leading-relaxed select-text">
-                        <code>{JSON.stringify(result.site_brief, null, 2)}</code>
-                      </pre>
+                      <div className="w-full h-full bg-slate-50 p-6 overflow-auto">
+                        <pre className="text-slate-800 text-xs md:text-sm font-mono leading-relaxed select-text">
+                          <code>{JSON.stringify(result.site_brief, null, 2)}</code>
+                        </pre>
+                      </div>
                     )}
                   </>
                 )}

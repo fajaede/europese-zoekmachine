@@ -7,19 +7,19 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   const staticRoutes: MetadataRoute.Sitemap = [
     {
       url: baseUrl,
-      lastModified: new Date(),
+      lastModified: "2024-05-20", // Gebruik een statische datum voor de laatste grote wijziging
       changeFrequency: "daily",
       priority: 1.0,
     },
     {
       url: `${baseUrl}/privacy-policy`,
-      lastModified: new Date(),
+      lastModified: "2024-05-20",
       changeFrequency: "monthly",
       priority: 0.8,
     },
     {
       url: `${baseUrl}/cookie-policy`,
-      lastModified: new Date(),
+      lastModified: "2024-05-20",
       changeFrequency: "monthly",
       priority: 0.8,
     },
@@ -45,6 +45,9 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     });
     const res = await fetch(`${apiUrl}/api/search?${searchParams.toString()}`, {
       method: "GET", // Search endpoint is GET
+      headers: {
+        "X-Sitemap-Request": "true",
+      },
       next: { revalidate: 3600 }, // Cache dit resultaat voor 1 uur (Vercel)
     });
 

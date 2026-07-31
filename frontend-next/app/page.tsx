@@ -18,6 +18,13 @@ type Hit = {
   video_url?: string;
 };
 
+type CrawlResponse = {
+  message: string;
+};
+
+type CrawlError = {
+  detail: string;
+};
 export type Message = {
   role: "user" | "assistant";
   content: string;
@@ -29,6 +36,11 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [hasSearched, setHasSearched] = useState(false);
+
+  // State voor het aanmeldformulier
+  const [submitUrl, setSubmitUrl] = useState("");
+  const [submitLoading, setSubmitLoading] = useState(false);
+  const [submitMessage, setSubmitMessage] = useState("");
 
   // Conversatiegeschiedenis voor Fajaede Intelligence Layer
   const [chatHistory, setChatHistory] = useState<Message[]>([]);
@@ -58,105 +70,81 @@ export default function Home() {
     isFollowUp: boolean = false
   ) => {
     if (!isFollowUp) {
-      setLoading(true); // Start de hoofdlaadindicator
+      setLoading(true);
+      setError("");
+      setHits([]); // Wis vorige resultaten onmiddellijk
     } else {
       setFollowUpLoading(true);
     }
-    if (!isFollowUp) setError("");
 
-    try {
-      const params = new URLSearchParams({
+    // --- Haal zoekresultaten op ---
+    const searchParams = new URLSearchParams({
         q: searchQuery,
         limit: (currentTab === "images" || currentTab === "videos") ? "24" : "12"
       });
+    if (currentTab === "news" || currentTab === "finance") {
+      searchParams.append("category", currentTab);
+    }
+    const searchUrl = `/api/search?${searchParams.toString()}`;
 
-      if (currentTab === "news" || currentTab === "finance") params.append("category", currentTab);
-      if (historyList.length > 0) {
-        params.append("history", JSON.stringify(historyList.slice(-5)));
-      }
+    const searchRequest = fetch(searchUrl)
+      .then(res => {
+        if (!res.ok) {
+          return res.json().then(err => { throw new Error(err.detail || `Zoekopdracht mislukt: ${res.status}`) });
+        }
+        return res.json();
+      })
+      .then(data => {
+        if (!isFollowUp) {
+          setHits(data.results || []);
+        }
+      })
+      .catch(err => {
+        if (!isFollowUp) {
+          setError(err.message);
+        }
+      });
 
-      const fetchApi = (path: string) => {
-        const fullUrl = path; // Gebruik een relatief pad, Next.js's rewrites handelen de proxy af.
-        return fetch(fullUrl).then(async (res) => {
-          if (!res.ok) {
-            // Probeer de JSON-body met de foutdetails te parsen.
-            const errorBody = await res.json().catch(() => ({
-              detail: `De server reageerde met status ${res.status}.`,
-            }));
-            // Maak een nieuw Error-object met de detailinformatie.
-            const error = new Error(errorBody.detail || "Er is een onbekende fout opgetreden.");
-            throw error;
-          }
-          // Als de status succesvol was, parse de normale JSON-respons.
-          return res.json();
-        });
-      };
-
-      // Start het zoekverzoek
-      const searchPromise = fetchApi(`/api/search?${params.toString()}`);
-
-      // Start het AI-verzoek parallel als de 'all' tab actief is
-      const aiPromise = currentTab === "all"
-        ? fetchApi(`/api/summarize?${new URLSearchParams({
+    // --- Haal AI-samenvatting parallel op ---
+    let aiRequest = Promise.resolve();
+    if (currentTab === "all") {
+      const aiUrl = `/api/summarize?${new URLSearchParams({
             q: searchQuery,
             history: JSON.stringify(historyList.filter(msg => msg.content !== "fajaedeAI+ is aan het denken...")),
-          }).toString()}`)
-        : Promise.resolve(null); // Geen AI-verzoek op andere tabs
+          }).toString()}`;
 
-      // Wacht op het zoekverzoek, update de UI en stop de hoofdlaadindicator
-      searchPromise.then(searchResponse => {
-        const searchResults = searchResponse.results || [];
-        if (!isFollowUp) {
-          setHits(searchResults);
-        }
-      }).catch(searchError => {
-        const message = searchError instanceof Error ? searchError.message : String(searchError);
-        setError(`Zoekopdracht mislukt: ${message}`);
-      }).finally(() => {
-        if (!isFollowUp) setLoading(false); // Stop de hoofdlaadindicator zodra de zoekresultaten er zijn (of gefaald zijn)
-      });
-
-      // Wacht op het AI-verzoek en update de chat
-      aiPromise.then(aiResponse => {
-        if (aiResponse) {
-            setChatHistory(prev => [
-              ...prev.filter(msg => msg.content !== "fajaedeAI+ is aan het denken..."),
-              { role: "assistant", content: aiResponse.ai }
-            ]);
-        } else if (currentTab !== "all") {
-            // Verwijder de "denken..." placeholder als er geen AI-verzoek is
-            setChatHistory(prev => prev.filter(msg => msg.content !== "fajaedeAI+ is aan het denken..."));
-        }
-      }).catch(aiError => {
-        const message = aiError instanceof Error ? aiError.message : String(aiError);
-        console.error("AI summary failed:", message);
-        const errorMessage = message || "Sorry, de AI-samenvatting kon niet worden geladen.";
-        setChatHistory(prev => [
-          ...prev.filter(msg => msg.content !== "fajaedeAI+ is aan het denken..."),
-          { role: "assistant", content: `Fout: ${errorMessage}` }
-        ]);
-      });
-
-      // Wacht op beide voor follow-up queries om de laadstatus correct te beheren
-      await Promise.all([searchPromise, aiPromise]);
-
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : String(err);
-      // Zorg ervoor dat de "denken..." placeholder wordt verwijderd bij een fout.
-      setChatHistory(prev => {
-        const filtered = prev.filter(msg => msg.content !== "fajaedeAI+ is aan het denken...");
-        // Voeg een foutmelding toe aan de chat als die er nog niet is.
-        if (!filtered.some(msg => msg.content.includes(errorMessage))) {
-          return [...filtered, { role: "assistant", content: `Fout: ${errorMessage}` }];
-        }
-        return filtered;
-      });
-      // Zorg ervoor dat de laadstatus ook bij een fout wordt uitgezet.
-      if (isFollowUp) setFollowUpLoading(false);
-      if (!isFollowUp) setLoading(false);
-    } finally {
-      if (isFollowUp) setFollowUpLoading(false);
+      aiRequest = fetch(aiUrl)
+        .then(res => {
+          if (!res.ok) {
+            return res.json().then(err => { throw new Error(err.detail || `AI-samenvatting mislukt: ${res.status}`) });
+          }
+          return res.json();
+        })
+        .then(data => {
+          setChatHistory(prev => [
+            ...prev.filter(msg => msg.content !== "fajaedeAI+ is aan het denken..."),
+            { role: "assistant", content: data.ai }
+          ]);
+        })
+        .catch(err => {
+          setChatHistory(prev => {
+            const filtered = prev.filter(msg => msg.content !== "fajaedeAI+ is aan het denken...");
+            if (!filtered.some(msg => msg.content.includes(err.message))) {
+              return [...filtered, { role: "assistant", content: `Fout: ${err.message}` }];
+            }
+            return filtered;
+          });
+        });
+    } else {
+      // Als er geen AI-verzoek was (andere tab), verwijder de "denken..." placeholder
+      setChatHistory(prev => prev.filter(msg => msg.content !== "fajaedeAI+ is aan het denken..."));
     }
+
+    // Wacht tot beide verzoeken zijn afgehandeld om de laadindicatoren uit te schakelen
+    await Promise.allSettled([searchRequest, aiRequest]);
+
+    if (isFollowUp) setFollowUpLoading(false);
+    if (!isFollowUp) setLoading(false);
   }
   
   async function handleSearch(e: React.FormEvent) {
@@ -196,6 +184,37 @@ export default function Home() {
     if (q.trim()) {
       // Voer een zoekopdracht uit voor de nieuwe tab, met behoud van de bestaande chatgeschiedenis.
       await performSearch(q, tab, chatHistory, false);
+    }
+  };
+
+  const handleSiteSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!submitUrl.trim()) return;
+
+    setSubmitLoading(true);
+    setSubmitMessage("");
+
+    try {
+      const res = await fetch('/api/crawl', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: submitUrl }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        const errorData = data as CrawlError;
+        throw new Error(errorData.detail || 'Er is een onbekende fout opgetreden.');
+      }
+
+      const responseData = data as CrawlResponse;
+      setSubmitMessage(responseData.message);
+      setSubmitUrl(""); // Reset het veld na succes
+    } catch (err) {
+      setSubmitMessage(`Fout: ${err instanceof Error ? err.message : 'Kon de site niet aanmelden.'}`);
+    } finally {
+      setSubmitLoading(false);
     }
   };
 
@@ -659,7 +678,7 @@ export default function Home() {
           </div>
         ) : (
           /* Fajaede Intelligence Layer / Features */
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 w-full max-w-3xl mb-12 text-left">
+          <div className="w-full max-w-3xl mb-12 text-left flex flex-col gap-8">
             {/* Card 1: Privacy */}
             <div className="bg-white/70 backdrop-blur-sm p-6 md:p-8 rounded-3xl shadow-[0_4px_20px_rgb(0,0,0,0.02)] border border-slate-200/60 hover:-translate-y-1 hover:shadow-[0_12px_30px_rgb(0,0,0,0.06)] hover:border-slate-350 hover:bg-white transition-all duration-300 flex gap-4">
               <div className="flex-shrink-0 w-12 h-12 bg-orange-50 rounded-2xl flex items-center justify-center text-orange-500 border border-orange-100">
@@ -674,46 +693,72 @@ export default function Home() {
               </div>
             </div>
 
-            {/* Card 2: AI Intelligence */}
-            <div className="bg-white/70 backdrop-blur-sm p-6 md:p-8 rounded-3xl shadow-[0_4px_20px_rgb(0,0,0,0.02)] border border-slate-200/60 hover:-translate-y-1 hover:shadow-[0_12px_30px_rgb(0,0,0,0.06)] hover:border-slate-350 hover:bg-white transition-all duration-300 flex gap-4">
-              <div className="flex-shrink-0 w-12 h-12 bg-blue-50 rounded-2xl flex items-center justify-center text-blue-500 border border-blue-100">
+            {/* Card 2: Meld je site aan */}
+            <div className="bg-white/70 backdrop-blur-sm p-6 md:p-8 rounded-3xl shadow-[0_4px_20px_rgb(0,0,0,0.02)] border border-slate-200/60 hover:-translate-y-1 hover:shadow-[0_12px_30px_rgb(0,0,0,0.06)] hover:border-slate-350 hover:bg-white transition-all duration-300 flex flex-col gap-4">
+              <div className="flex items-center gap-4">
+                <div className="flex-shrink-0 w-12 h-12 bg-blue-50 rounded-2xl flex items-center justify-center text-blue-500 border border-blue-100">
                 <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z" />
+                    <path d="M10 14a3.5 3.5 0 0 0 5 0l4 -4a3.5 3.5 0 0 0 -5 -5l-4 4" />
+                    <path d="M14 10a3.5 3.5 0 0 0 -5 0l-4 4a3.5 3.5 0 0 0 5 5l4 -4" />
+                    <line x1="19" y1="5" x2="19" y2="5.01" />
                 </svg>
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold text-slate-800 mb-1.5">Help de index groeien</h3>
+                  <p className="text-slate-600 text-sm leading-relaxed">Voeg jouw website toe aan fajaedeAI+ en help mee aan een onafhankelijke Europese zoekindex.</p>
+                </div>
               </div>
-              <div>
-                <h3 className="text-lg font-bold text-slate-800 mb-1.5">Fajaede Intelligence</h3>
-                <p className="text-slate-600 text-sm leading-relaxed">Direct heldere samenvattingen en antwoorden op complexe vragen via onze geïntegreerde AI-laag.</p>
-              </div>
+              <form onSubmit={handleSiteSubmit} className="flex flex-col sm:flex-row gap-3 mt-2">
+                <input
+                  type="url"
+                  value={submitUrl}
+                  onChange={(e) => setSubmitUrl(e.target.value)}
+                  placeholder="https://www.jouwwebsite.eu"
+                  className="flex-1 px-5 py-3 border border-slate-200 rounded-full focus:outline-none focus:ring-2 focus:ring-blue-500/50 bg-white text-slate-800 shadow-sm text-sm"
+                  disabled={submitLoading}
+                  required
+                />
+                <button
+                  type="submit"
+                  disabled={submitLoading}
+                  className="bg-blue-600 text-white px-6 py-3 rounded-full hover:bg-blue-500 transition-colors shadow-sm disabled:bg-slate-400 flex items-center justify-center font-semibold"
+                >
+                  {submitLoading ? 'Bezig...' : 'Aanmelden'}
+                </button>
+              </form>
+              {submitMessage && (
+                <div className={`mt-3 text-xs p-3 rounded-lg ${submitMessage.startsWith('Fout:') ? 'bg-red-50 text-red-700' : 'bg-green-50 text-green-700'}`}>
+                  {submitMessage}
+                </div>
+              )}
             </div>
 
-            {/* Card 3: Website Generator */}
-            <div className="bg-white/70 backdrop-blur-sm p-6 md:p-8 rounded-3xl shadow-[0_4px_20px_rgb(0,0,0,0.02)] border border-slate-200/60 hover:-translate-y-1 hover:shadow-[0_12px_30px_rgb(0,0,0,0.06)] hover:border-slate-350 hover:bg-white transition-all duration-300 flex gap-4">
-              <div className="flex-shrink-0 w-12 h-12 bg-amber-50 rounded-2xl flex items-center justify-center text-amber-500 border border-amber-100">
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                  <rect width="18" height="18" x="3" y="3" rx="2" />
-                  <path d="M3 9h18" />
-                  <path d="M9 21V9" />
-                </svg>
+            {/* Andere kaarten kunnen hieronder worden geplaatst */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {/* Website Generator (tijdelijk uitgeschakeld) */}
+              <div className="bg-white/70 backdrop-blur-sm p-6 rounded-3xl shadow-[0_4px_20px_rgb(0,0,0,0.02)] border border-slate-200/60 transition-all duration-300 flex gap-4 opacity-50 cursor-not-allowed">
+                <div className="flex-shrink-0 w-12 h-12 bg-amber-50 rounded-2xl flex items-center justify-center text-amber-500 border border-amber-100">
+                  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                    <rect width="18" height="18" x="3" y="3" rx="2" />
+                    <path d="M3 9h18" /><path d="M9 21V9" />
+                  </svg>
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold text-slate-800 mb-1.5">Website Builder</h3>
+                  <p className="text-slate-600 text-sm leading-relaxed">Genereer direct complete websites met AI.</p>
+                </div>
               </div>
-              <div>
-                <h3 className="text-lg font-bold text-slate-800 mb-1.5">Website Generator</h3>
-                <p className="text-slate-600 text-sm leading-relaxed">Genereer in een handomdraai complete, professionele HTML-websites op basis van een korte beschrijving.</p>
-              </div>
-            </div>
-
-            {/* Card 4: Independence */}
-            <div className="bg-white/70 backdrop-blur-sm p-6 md:p-8 rounded-3xl shadow-[0_4px_20px_rgb(0,0,0,0.02)] border border-slate-200/60 hover:-translate-y-1 hover:shadow-[0_12px_30px_rgb(0,0,0,0.06)] hover:border-slate-350 hover:bg-white transition-all duration-300 flex gap-4">
-              <div className="flex-shrink-0 w-12 h-12 bg-indigo-50 rounded-2xl flex items-center justify-center text-indigo-500 border border-indigo-100">
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                  <circle cx="12" cy="12" r="10" />
-                  <path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20" />
-                  <path d="M2 12h20" />
-                </svg>
-              </div>
-              <div>
-                <h3 className="text-lg font-bold text-slate-800 mb-1.5">Neutraal & Onafhankelijk</h3>
-                <p className="text-slate-600 text-sm leading-relaxed">Een Europees alternatief dat onbevooroordeelde zoekresultaten levert zonder commerciële profilering.</p>
+              {/* Onafhankelijk */}
+              <div className="bg-white/70 backdrop-blur-sm p-6 rounded-3xl shadow-[0_4px_20px_rgb(0,0,0,0.02)] border border-slate-200/60 hover:-translate-y-1 hover:shadow-[0_12px_30px_rgb(0,0,0,0.06)] hover:border-slate-350 hover:bg-white transition-all duration-300 flex gap-4">
+                <div className="flex-shrink-0 w-12 h-12 bg-indigo-50 rounded-2xl flex items-center justify-center text-indigo-500 border border-indigo-100">
+                  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                    <circle cx="12" cy="12" r="10" /><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20" /><path d="M2 12h20" />
+                  </svg>
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold text-slate-800 mb-1.5">Neutraal & Onafhankelijk</h3>
+                  <p className="text-slate-600 text-sm leading-relaxed">Onbevooroordeelde resultaten zonder commerciële profilering.</p>
+                </div>
               </div>
             </div>
           </div>
@@ -727,9 +772,9 @@ export default function Home() {
           <Link href="/cookie-policy" className="hover:text-orange-600 transition-colors">
             Cookiebeleid
           </Link>
-          <a href="#" className="hover:text-orange-600 transition-colors">
+          <span className="text-slate-400 cursor-not-allowed">
             Website Generator
-          </a>
+          </span>
         </div>
       </div>
     </main>
