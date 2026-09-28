@@ -17,263 +17,279 @@
             margin: 0 auto;
             background: white;
             border-radius: 16px;
-            padding: 40px;
             box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            overflow: hidden;
         }
-        h1 { color: #667eea; margin-bottom: 10px; font-size: 2.5em; }
-        .subtitle { color: #666; margin-bottom: 30px; font-size: 1.1em; }
-        .section {
-            margin: 30px 0;
-            padding: 25px;
-            background: #f8f9fa;
-            border-radius: 12px;
-            border-left: 4px solid #667eea;
-        }
-        .section h2 { color: #333; margin-bottom: 15px; font-size: 1.4em; }
-        .endpoint {
-            background: white;
-            padding: 15px;
-            margin: 10px 0;
-            border-radius: 8px;
-            border: 1px solid #e2e8f0;
-        }
-        .method {
-            display: inline-block;
-            padding: 4px 12px;
-            border-radius: 6px;
-            font-weight: bold;
-            font-size: 0.85em;
-            margin-right: 10px;
-        }
-        .post { background: #48bb78; color: white; }
-        .get { background: #4299e1; color: white; }
-        code {
-            background: #edf2f7;
-            padding: 2px 8px;
-            border-radius: 4px;
-            font-family: 'Courier New', monospace;
-            color: #e53e3e;
-        }
-        .example {
-            background: #1a202c;
-            color: #e2e8f0;
-            padding: 20px;
-            border-radius: 8px;
-            font-family: 'Courier New', monospace;
-            font-size: 0.9em;
-            overflow-x: auto;
-            margin: 15px 0;
-        }
-        .warning {
-            background: #fffaf0;
-            border: 1px solid #f6ad55;
-            color: #c05621;
-            padding: 15px;
-            border-radius: 8px;
-            margin: 15px 0;
-        }
-        .step {
-            background: white;
-            padding: 20px;
-            margin: 15px 0;
-            border-radius: 8px;
-            border: 2px solid #667eea;
-        }
-        .step-number {
-            display: inline-block;
-            width: 30px;
-            height: 30px;
-            background: #667eea;
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             color: white;
-            border-radius: 50%;
+            padding: 40px;
             text-align: center;
-            line-height: 30px;
-            font-weight: bold;
-            margin-right: 10px;
         }
-        a { color: #667eea; text-decoration: none; }
-        a:hover { text-decoration: underline; }
-        .btn {
-            display: inline-block;
-            background: #667eea;
-            color: white;
-            padding: 12px 24px;
+        .header h1 { font-size: 2.5em; margin-bottom: 10px; }
+        .header p { opacity: 0.9; font-size: 1.1em; }
+        .content { padding: 40px; }
+        .section { margin-bottom: 40px; }
+        .section h2 { color: #667eea; margin-bottom: 20px; font-size: 1.8em; }
+        .form-group { margin-bottom: 20px; }
+        .form-group label { display: block; margin-bottom: 8px; font-weight: 600; color: #333; }
+        .form-group input, .form-group textarea {
+            width: 100%;
+            padding: 12px 16px;
+            border: 2px solid #e0e0e0;
             border-radius: 8px;
-            text-decoration: none;
-            font-weight: bold;
-            margin: 10px 10px 10px 0;
+            font-size: 16px;
+            transition: border-color 0.3s;
         }
-        .btn:hover { background: #5568d3; text-decoration: none; }
+        .form-group input:focus, .form-group textarea:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        .btn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 14px 28px;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        .btn:hover { transform: translateY(-2px); box-shadow: 0 8px 20px rgba(102,126,234,0.4); }
+        .btn:disabled { opacity: 0.6; cursor: not-allowed; transform: none; }
+        .result-box {
+            background: #f8f9fa;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            padding: 20px;
+            margin-top: 20px;
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+        .success { border-color: #4caf50; background: #e8f5e9; }
+        .error { border-color: #f44336; background: #ffebee; }
+        .api-key-display {
+            background: #fff3cd;
+            border: 2px solid #ffc107;
+            padding: 16px;
+            border-radius: 8px;
+            margin-top: 16px;
+            font-family: monospace;
+            font-size: 16px;
+            word-break: break-all;
+        }
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            margin-top: 20px;
+        }
+        .stat-card {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 24px;
+            border-radius: 12px;
+            text-align: center;
+        }
+        .stat-card h3 { font-size: 2.5em; margin-bottom: 8px; }
+        .stat-card p { opacity: 0.9; }
+        .loading { opacity: 0.6; pointer-events: none; }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>🚀 Developer Dashboard</h1>
-        <p class="subtitle">Europese Zoekmachine API - SEO & Summarization Tools</p>
-
-        <div class="section">
-            <h2>📝 Snel Starten</h2>
-            <div class="step">
-                <span class="step-number">1</span>
-                <strong>Registreer je email</strong> - Krijg direct een API key
-            </div>
-            <div class="step">
-                <span class="step-number">2</span>
-                <strong>Gebruik de API key</strong> - Voeg toe aan je requests
-            </div>
-            <div class="step">
-                <span class="step-number">3</span>
-                <strong>Genereer SEO content</strong> - Voor je EU nieuws site
-            </div>
+        <div class="header">
+            <h1>🚀 Developer Dashboard</h1>
+            <p>Europese Zoekmachine API - SEO Generatie Tool</p>
         </div>
-
-        <div class="section">
-            <h2>🔑 API Endpoints</h2>
+        
+        <div class="content">
+            <!-- Registratie Sectie -->
+            <div class="section">
+                <h2>📧 Registreer voor API Access</h2>
+                <div class="form-group">
+                    <label for="email">Email adres</label>
+                    <input type="email" id="email" placeholder="jouw@email.nl" />
+                </div>
+                <div class="form-group">
+                    <label for="project">Project naam (optioneel)</label>
+                    <input type="text" id="project" placeholder="Mijn Project" />
+                </div>
+                <button class="btn" onclick="register()">Registreer & Krijg API Key</button>
+                <div id="registerResult"></div>
+            </div>
             
-            <div class="endpoint">
-                <span class="method post">POST</span>
-                <code>/api/developers/register</code>
-                <p style="margin-top: 10px; color: #666;">Registreer een nieuwe developer</p>
-                <div class="example">
-{
-  "email": "jij@voorbeeld.nl",
-  "project_name": "Mijn EU News Site"
-}
-
-Response:
-{
-  "api_key": "sk_eu_abc123xyz...",
-  "email": "jij@voorbeeld.nl",
-  "daily_limit": 100,
-  "message": "Succesvol geregistreerd!"
-}
+            <!-- SEO Generatie Sectie -->
+            <div class="section">
+                <h2>✨ Genereer SEO Metadata</h2>
+                <div class="form-group">
+                    <label for="apiKey">API Key</label>
+                    <input type="text" id="apiKey" placeholder="sk_eu_..." />
                 </div>
-            </div>
-
-            <div class="endpoint">
-                <span class="method post">POST</span>
-                <code>/api/developers/seo/generate</code>
-                <p style="margin-top: 10px; color: #666;">Genereer SEO metadata voor content</p>
-                <div class="example">
-Headers: X-API-Key: sk_eu_jouw_key
-
-{
-  "content": "EU Parlement stemt over nieuwe klimaatwet...",
-  "url": "https://mijnsite.nl/eu-klimaat",
-  "language": "nl"
-}
-
-Response:
-{
-  "title": "EU Klimaatwet 2026: Wat Betekent Dit?",
-  "meta_description": "Het EU Parlement heeft gestemd over de nieuwe klimaatwet...",
-  "keywords": ["EU", "klimaat", "wet", "parlement"],
-  "score": 87
-}
+                <div class="form-group">
+                    <label for="content">Content</label>
+                    <textarea id="content" rows="6" placeholder="Plak je content hier..."></textarea>
                 </div>
-            </div>
-
-            <div class="endpoint">
-                <span class="method get">GET</span>
-                <code>/api/developers/usage</code>
-                <p style="margin-top: 10px; color: #666;">Bekijk je usage statistics</p>
-                <div class="example">
-Headers: X-API-Key: sk_eu_jouw_key
-
-Response:
-{
-  "email": "jij@voorbeeld.nl",
-  "project_name": "Mijn EU News Site",
-  "daily_limit": 100,
-  "requests_today": 5,
-  "total_requests": 42,
-  "created_at": "2026-09-28 18:00:00"
-}
+                <div class="form-group">
+                    <label for="url">URL (optioneel)</label>
+                    <input type="url" id="url" placeholder="https://jouwsite.nl/pagina" />
                 </div>
+                <div class="form-group">
+                    <label for="language">Taal</label>
+                    <select id="language" style="width:100%;padding:12px;border:2px solid #e0e0e0;border-radius:8px;font-size:16px;">
+                        <option value="nl">Nederlands</option>
+                        <option value="en">Engels</option>
+                        <option value="de">Duits</option>
+                        <option value="fr">Frans</option>
+                    </select>
+                </div>
+                <button class="btn" onclick="generateSEO()">Genereer SEO</button>
+                <div id="seoResult"></div>
             </div>
-        </div>
-
-        <div class="section">
-            <h2>⚠️ Belangrijk</h2>
-            <div class="warning">
-                <strong>Bewaar je API key veilig!</strong><br>
-                Deel hem nooit publiek. Gebruik environment variables in je code.
-            </div>
-            <p><strong>Rate Limit:</strong> 100 requests per dag (gratis tier)</p>
-            <p><strong>Support:</strong> Mail naar support@europese-zoekmachine.nl</p>
-        </div>
-
-        <div class="section">
-            <h2>💻 Voorbeeld Code</h2>
             
-            <h3 style="margin: 15px 0 10px;">Python</h3>
-            <div class="example">
-import requests
-
-API_KEY = "sk_eu_jouw_key"
-
-# SEO genereren
-response = requests.post(
-    "http://localhost:8000/api/developers/seo/generate",
-    headers={"X-API-Key": API_KEY},
-    json={
-        "content": "EU Parlement stemt over nieuwe klimaatwet...",
-        "url": "https://mijnsite.nl/eu-klimaat",
-        "language": "nl"
-    }
-)
-
-seo = response.json()
-print(f"Title: {seo['title']}")
-print(f"Description: {seo['meta_description']}")
-print(f"Score: {seo['score']}")
-            </div>
-
-            <h3 style="margin: 15px 0 10px;">JavaScript/Node.js</h3>
-            <div class="example">
-const API_KEY = "sk_eu_jouw_key";
-
-const response = await fetch("http://localhost:8000/api/developers/seo/generate", {
-    method: "POST",
-    headers: {
-        "X-API-Key": API_KEY,
-        "Content-Type": "application/json"
-    },
-    body: JSON.stringify({
-        content: "EU Parlement stemt over nieuwe klimaatwet...",
-        url: "https://mijnsite.nl/eu-klimaat",
-        language: "nl"
-    })
-});
-
-const seo = await response.json();
-console.log("Title:", seo.title);
-console.log("Description:", seo.meta_description);
-            </div>
-
-            <h3 style="margin: 15px 0 10px;">cURL</h3>
-            <div class="example">
-curl -X POST http://localhost:8000/api/developers/seo/generate \
-  -H "X-API-Key: sk_eu_jouw_key" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "content": "EU Parlement stemt over nieuwe klimaatwet...",
-    "url": "https://mijnsite.nl/eu-klimaat",
-    "language": "nl"
-  }'
+            <!-- Usage Stats Sectie -->
+            <div class="section">
+                <h2>📊 Usage Statistics</h2>
+                <div class="form-group">
+                    <label for="apiKeyStats">API Key</label>
+                    <input type="text" id="apiKeyStats" placeholder="sk_eu_..." />
+                </div>
+                <button class="btn" onclick="getUsage()">Bekijk Stats</button>
+                <div id="statsResult"></div>
             </div>
         </div>
-
-        <div class="section">
-            <h2>📚 Meer Documentatie</h2>
-            <a href="/docs" class="btn">📖 Swagger API Docs</a>
-            <a href="/health" class="btn">❤️ Health Check</a>
-            <a href="/api/search?q=EU" class="btn">🔍 Test Search API</a>
-        </div>
-
-        <p style="text-align: center; margin-top: 30px; color: #999; font-size: 0.9em;">
-            Europese Zoekmachine API v1.0 | Gebouwd met ❤️ voor EU transparency
-        </p>
     </div>
+    
+    <script>
+        const API_BASE = window.location.origin + '/api/developers';
+        
+        async function register() {
+            const email = document.getElementById('email').value.trim();
+            const project = document.getElementById('project').value.trim();
+            const resultDiv = document.getElementById('registerResult');
+            
+            if (!email) {
+                resultDiv.innerHTML = '<div class="result-box error">❌ Vul een email adres in</div>';
+                return;
+            }
+            
+            try {
+                const response = await fetch(API_BASE + '/register', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email, project_name: project || undefined })
+                });
+                const data = await response.json();
+                
+                if (response.ok) {
+                    resultDiv.innerHTML = `
+                        <div class="result-box success">
+                            ✅ ${data.message}
+                            <div class="api-key-display">🔑 ${data.api_key}</div>
+                            <p style="margin-top:12px;font-size:13px;color:#666;">Bewaar deze key goed! Je hebt hem nodig voor SEO generatie.</p>
+                        </div>
+                    `;
+                    // Auto-fill API key in andere velden
+                    document.getElementById('apiKey').value = data.api_key;
+                    document.getElementById('apiKeyStats').value = data.api_key;
+                } else {
+                    resultDiv.innerHTML = `<div class="result-box error">❌ ${data.detail || 'Fout bij registratie'}</div>`;
+                }
+            } catch (error) {
+                resultDiv.innerHTML = `<div class="result-box error">❌ ${error.message}</div>`;
+            }
+        }
+        
+        async function generateSEO() {
+            const apiKey = document.getElementById('apiKey').value.trim();
+            const content = document.getElementById('content').value.trim();
+            const url = document.getElementById('url').value.trim();
+            const language = document.getElementById('language').value;
+            const resultDiv = document.getElementById('seoResult');
+            
+            if (!apiKey || !content) {
+                resultDiv.innerHTML = '<div class="result-box error">❌ Vul API key en content in</div>';
+                return;
+            }
+            
+            resultDiv.innerHTML = '<div class="result-box">⏳ Genereren...</div>';
+            
+            try {
+                const response = await fetch(API_BASE + '/seo/generate', {
+                    method: 'POST',
+                    headers: {
+                        'X-API-Key': apiKey,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ content, url: url || undefined, language })
+                });
+                const data = await response.json();
+                
+                if (response.ok) {
+                    resultDiv.innerHTML = `
+                        <div class="result-box success">
+                            <strong>✅ SEO Metadata Gegenereerd (Score: ${data.score}/100)</strong>
+                            
+                            <p style="margin-top:16px;"><strong>Title:</strong><br>${data.title}</p>
+                            <p style="margin-top:12px;"><strong>Meta Description:</strong><br>${data.meta_description}</p>
+                            <p style="margin-top:12px;"><strong>Keywords:</strong><br>${data.keywords.join(', ')}</p>
+                        </div>
+                    `;
+                } else {
+                    resultDiv.innerHTML = `<div class="result-box error">❌ ${data.detail || data.message || 'Fout bij genereren'}</div>`;
+                }
+            } catch (error) {
+                resultDiv.innerHTML = `<div class="result-box error">❌ ${error.message}</div>`;
+            }
+        }
+        
+        async function getUsage() {
+            const apiKey = document.getElementById('apiKeyStats').value.trim();
+            const resultDiv = document.getElementById('statsResult');
+            
+            if (!apiKey) {
+                resultDiv.innerHTML = '<div class="result-box error">❌ Vul API key in</div>';
+                return;
+            }
+            
+            try {
+                const response = await fetch(API_BASE + '/usage', {
+                    method: 'GET',
+                    headers: { 'X-API-Key': apiKey }
+                });
+                const data = await response.json();
+                
+                if (response.ok) {
+                    resultDiv.innerHTML = `
+                        <div class="stats-grid">
+                            <div class="stat-card">
+                                <h3>${data.requests_today}</h3>
+                                <p>Requests Vandaag</p>
+                            </div>
+                            <div class="stat-card">
+                                <h3>${data.daily_limit}</h3>
+                                <p>Daily Limit</p>
+                            </div>
+                            <div class="stat-card">
+                                <h3>${data.total_requests}</h3>
+                                <p>Totaal Requests</p>
+                            </div>
+                            <div class="stat-card">
+                                <h3>${new Date(data.created_at).toLocaleDateString('nl-NL')}</h3>
+                                <p>Geregistreerd</p>
+                            </div>
+                        </div>
+                    `;
+                } else {
+                    resultDiv.innerHTML = `<div class="result-box error">❌ ${data.detail || 'Fout bij ophalen stats'}</div>`;
+                }
+            } catch (error) {
+                resultDiv.innerHTML = `<div class="result-box error">❌ ${error.message}</div>`;
+            }
+        }
+    </script>
 </body>
 </html>
