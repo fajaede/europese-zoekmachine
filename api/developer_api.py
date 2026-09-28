@@ -130,7 +130,9 @@ async def generate_seo(request: SEOGenerateRequest, x_api_key: str = Header(...,
         response = await client.chat.completions.create(model="gpt-4o-mini", messages=[{"role": "system", "content": "SEO expert. Return ALLEEN JSON."}, {"role": "user", "content": prompt}], response_format={"type": "json_object"})
         import json
         seo_data = json.loads(response.choices[0].message.content)
-        return SEOGenerateResponse(title=seo_data.get("title", "")[:60], meta_description=seo_data.get("meta_description", "")[:160], keywords=seo_data.get("keywords", []), score=seo_data.get("score", 0))
+        keywords_raw = seo_data.get("keywords", [])
+        keywords_list = keywords_raw if isinstance(keywords_raw, list) else (keywords_raw.split(", ") if isinstance(keywords_raw, str) else [])
+        return SEOGenerateResponse(title=seo_data.get("title", "")[:60], meta_description=seo_data.get("meta_description", "")[:160], keywords=keywords_list, score=seo_data.get("score", 0))
     except Exception as e:
         print(f"SEO fout: {e}")
         words = request.content.split()[:10]

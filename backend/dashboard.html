@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🔍 Europese Zoekmachine - Dashboard</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+        header {
+            background: rgba(255,255,255,0.95);
+            border-radius: 15px;
+            padding: 25px;
+            margin-bottom: 20px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+        }
+        h1 {
+            color: #667eea;
+            font-size: 2em;
+            margin-bottom: 10px;
+        }
+        .subtitle {
+            color: #666;
+            font-size: 1.1em;
+        }
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+        .card {
+            background: rgba(255,255,255,0.95);
+            border-radius: 15px;
+            padding: 25px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+            transition: transform 0.3s ease;
+        }
+        .card:hover {
+            transform: translateY(-5px);
+        }
+        .card h2 {
+            color: #764ba2;
+            font-size: 1.5em;
+            margin-bottom: 15px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .stat-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 12px 0;
+            border-bottom: 1px solid #eee;
+        }
+        .stat-row:last-child {
+            border-bottom: none;
+        }
+        .stat-label {
+            color: #666;
+            font-weight: 500;
+        }
+        .stat-value {
+            color: #333;
+            font-weight: bold;
+            font-size: 1.2em;
+        }
+        .status-badge {
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-weight: bold;
+            font-size: 0.9em;
+            text-transform: uppercase;
+        }
+        .status-healthy { background: #48bb78; color: white; }
+        .status-degraded { background: #ed8936; color: white; }
+        .status-error { background: #f56565; color: white; }
+        .service-status {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 10px 0;
+        }
+        .service-dot {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            display: inline-block;
+            margin-right: 10px;
+        }
+        .dot-ok { background: #48bb78; }
+        .dot-error { background: #f56565; }
+        .dot-active { background: #4299e1; animation: pulse 2s infinite; }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        .progress-bar {
+            background: #eee;
+            border-radius: 10px;
+            height: 30px;
+            overflow: hidden;
+            margin: 15px 0;
+        }
+        .progress-fill {
+            background: linear-gradient(90deg, #667eea, #764ba2);
+            height: 100%;
+            transition: width 0.5s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-weight: bold;
+        }
+        .big-number {
+            font-size: 3em;
+            font-weight: bold;
+            color: #667eea;
+            text-align: center;
+            padding: 20px;
+        }
+        .refresh-btn {
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            color: white;
+            border: none;
+            padding: 12px 25px;
+            border-radius: 8px;
+            font-size: 1em;
+            cursor: pointer;
+            transition: transform 0.2s;
+        }
+        .refresh-btn:hover {
+            transform: scale(1.05);
+        }
+        .timestamp {
+            color: #999;
+            font-size: 0.9em;
+            text-align: right;
+            margin-top: 20px;
+        }
+        .wide-card {
+            grid-column: 1 / -1;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🔍 Europese Zoekmachine Dashboard</h1>
+            <p class="subtitle">Real-time monitoring van crawler, MeiliSearch en Redis</p>
+            <button class="refresh-btn" onclick="refreshData()">🔄 Refresh</button>
+        </header>
+
+        <div class="grid">
+            <!-- Health Status -->
+            <div class="card wide-card">
+                <h2>❤️ Systeem Status</h2>
+                <div id="health-status"></div>
+                <div class="service-status">
+                    <span>Backend</span>
+                    <span><span class="service-dot dot-ok" id="dot-backend"></span><span id="status-backend">Loading...</span></span>
+                </div>
+                <div class="service-status">
+                    <span>Redis</span>
+                    <span><span class="service-dot dot-ok" id="dot-redis"></span><span id="status-redis">Loading...</span></span>
+                </div>
+                <div class="service-status">
+                    <span>MeiliSearch</span>
+                    <span><span class="service-dot dot-ok" id="dot-meilisearch"></span><span id="status-meilisearch">Loading...</span></span>
+                </div>
+                <div class="service-status">
+                    <span>Crawler</span>
+                    <span><span class="service-dot dot-active" id="dot-crawler"></span><span id="status-crawler">Loading...</span></span>
+                </div>
+            </div>
+
+            <!-- Crawler Stats -->
+            <div class="card">
+                <h2>🕷️ Crawler</h2>
+                <div class="big-number" id="crawler-queue">-</div>
+                <div class="stat-row">
+                    <span class="stat-label">Pages Visited</span>
+                    <span class="stat-value" id="crawler-visited">-</span>
+                </div>
+                <div class="stat-row">
+                    <span class="stat-label">Status</span>
+                    <span class="stat-value" id="crawler-status">-</span>
+                </div>
+                <div class="progress-bar">
+                    <div class="progress-fill" id="crawl-progress" style="width: 0%">0%</div>
+                </div>
+            </div>
+
+            <!-- MeiliSearch Stats -->
+            <div class="card">
+                <h2>📊 MeiliSearch</h2>
+                <div class="big-number" id="meili-docs">-</div>
+                <div class="stat-row">
+                    <span class="stat-label">Indexing</span>
+                    <span class="stat-value" id="meili-indexing">-</span>
+                </div>
+                <div class="stat-row">
+                    <span class="stat-label">Fields</span>
+                    <span class="stat-value" id="meili-fields">-</span>
+                </div>
+            </div>
+
+            <!-- Metrics -->
+            <div class="card">
+                <h2>📈 Metrics</h2>
+                <div class="stat-row">
+                    <span class="stat-label">Crawler Queue</span>
+                    <span class="stat-value" id="metric-queue">-</span>
+                </div>
+                <div class="stat-row">
+                    <span class="stat-label">Pages Visited</span>
+                    <span class="stat-value" id="metric-visited">-</span>
+                </div>
+                <div class="stat-row">
+                    <span class="stat-label">Crawler Running</span>
+                    <span class="stat-value" id="metric-running">-</span>
+                </div>
+                <div class="stat-row">
+                    <span class="stat-label">Documents</span>
+                    <span class="stat-value" id="metric-docs">-</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="timestamp" id="last-update">Last update: -</div>
+    </div>
+
+    <script>
+        const API_BASE = window.location.origin;
+
+        async function fetchJSON(url) {
+            const response = await fetch(url);
+            return await response.json();
+        }
+
+        function updateHealth(data) {
+            const statusEl = document.getElementById('health-status');
+            const statusClass = data.status === 'healthy' ? 'status-healthy' : 'status-degraded';
+            statusEl.innerHTML = `<span class="status-badge ${statusClass}">${data.status}</span>`;
+
+            const services = data.services;
+            for (const [name, status] of Object.entries(services)) {
+                const dot = document.getElementById(`dot-${name}`);
+                const text = document.getElementById(`status-${name}`);
+                
+                dot.className = 'service-dot';
+                if (status === 'ok' || status === 'active') {
+                    dot.classList.add('dot-ok');
+                } else if (status === 'error') {
+                    dot.classList.add('dot-error');
+                } else if (status === 'idle') {
+                    dot.classList.add('dot-active');
+                }
+                
+                text.textContent = status;
+            }
+        }
+
+        function updateCrawler(data) {
+            document.getElementById('crawler-queue').textContent = data.queue_size;
+            document.getElementById('crawler-visited').textContent = data.pages_visited;
+            document.getElementById('crawler-status').textContent = data.status;
+            document.getElementById('crawl-progress').style.width = data.progress_percent + '%';
+            document.getElementById('crawl-progress').textContent = data.progress_percent + '%';
+        }
+
+        function updateMeiliSearch(data) {
+            document.getElementById('meili-docs').textContent = data.documents;
+            document.getElementById('meili-indexing').textContent = data.is_indexing ? 'Yes' : 'No';
+            document.getElementById('meili-fields').textContent = Object.keys(data.field_distribution || {}).length;
+        }
+
+        function updateMetrics(data) {
+            const m = data.metrics;
+            document.getElementById('metric-queue').textContent = m.crawler_queue_size;
+            document.getElementById('metric-visited').textContent = m.crawler_pages_visited;
+            document.getElementById('metric-running').textContent = m.crawler_is_running ? 'Yes' : 'No';
+            document.getElementById('metric-docs').textContent = m.meilisearch_documents;
+        }
+
+        async function refreshData() {
+            try {
+                const [health, stats, metrics] = await Promise.all([
+                    fetchJSON(`${API_BASE}/monitoring/health`),
+                    fetchJSON(`${API_BASE}/monitoring/stats`),
+                    fetchJSON(`${API_BASE}/monitoring/metrics`)
+                ]);
+
+                updateHealth(health);
+                updateCrawler(stats.crawler);
+                updateMeiliSearch(stats.meilisearch);
+                updateMetrics(metrics);
+
+                document.getElementById('last-update').textContent = 
+                    'Last update: ' + new Date().toLocaleTimeString();
+            } catch (error) {
+                console.error('Error fetching data:', error);
+            }
+        }
+
+        // Initial load
+        refreshData();
+
+        // Auto-refresh every 5 seconds
+        setInterval(refreshData, 5000);
+    </script>
+</body>
+</html>

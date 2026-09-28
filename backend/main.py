@@ -244,7 +244,7 @@ def read_root():
 @app.get("/developers", response_class=HTMLResponse)
 async def developer_dashboard():
     """Developer dashboard pagina."""
-    with open("backend/developer_dashboard.html", "r") as f:
+    with open(os.path.join(os.path.dirname(__file__), "developer_dashboard.html"), "r") as f:
         return HTMLResponse(content=f.read(), status_code=200)
 
 @app.get("/health")
