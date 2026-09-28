@@ -10,6 +10,7 @@ from contextlib import asynccontextmanager
 import traceback
 from urllib.parse import urljoin, urlparse, urlunparse
 from urllib.robotparser import RobotFileParser
+import re
 
 # Third‑party imports
 import httpx
@@ -39,6 +40,48 @@ from api.routes.builder import router as builder_router
 
 # Laad environment variables uit het .env bestand in de root directory
 load_dotenv()
+
+
+
+def calculate_seo_score(html_content: str, url: str) -> int:
+    """Bereken SEO + geo relevantie score 0-100"""
+    score = 0
+    html_lower = html_content.lower()
+
+    # Title tag (20 punten)
+    if '<title>' in html_lower and '</title>' in html_lower:
+        score += 20
+
+    # Meta description (20 punten)
+    if 'meta name="description"' in html_lower or "meta name='description'" in html_lower:
+        score += 20
+
+    # H1 tag (10 punten)
+    if '<h1' in html_lower:
+        score += 10
+
+    # Afbeeldingen met alt (10 punten)
+    if '<img' in html_lower and 'alt=' in html_lower:
+        score += 10
+
+    # Structured data (20 punten)
+    if 'schema.org' in html_lower or 'application/ld+json' in html_lower:
+        score += 20
+
+    # Mobile viewport (10 punten)
+    if 'viewport' in html_lower:
+        score += 10
+
+    # Geo/lokale relevantie (10 punten)
+    geo_keywords = ["location", "address", "city", "country", "region",
+                    "coordinates", "map", "near", "distance", "local",
+                    "european", "eu", "brussels", "strasbourg"]
+    geo_count = sum(1 for kw in geo_keywords if kw in html_lower)
+    if geo_count >= 5: score += 10
+    elif geo_count >= 2: score += 7
+    elif geo_count >= 1: score += 5
+
+    return min(score, 100)
 
 
 @asynccontextmanager
@@ -277,12 +320,22 @@ class Crawler:  # pylint: disable=too-few-public-methods
                       "image/avif,image/webp,image/apng,*/*;q=0.8,"
                       "application/signed-exchange;v=b3;q=0.7",
             "Accept-Language": "nl-BE,nl;q=0.9,en-US;q=0.8,en;q=0.7",
-            "Accept-Encoding": "gzip, deflate, br, zstd",
-            "DNT": "1", # Do Not Track
+            "Accept-Encoding": "gzip, deflate",  # Verwijder br en zstd voor compatibiliteit
+            "DNT": "1",
             "Upgrade-Insecure-Requests": "1",
             "Sec-Fetch-Dest": "document",
+            "Sec-Fetch-Mode": "navigate",
+            "Sec-Fetch-Site": "none",
+            "Sec-Fetch-User": "?1",
+            "Cache-Control": "no-cache",
+            "Pragma": "no-cache",
         }
-        self.client = httpx.AsyncClient(headers=headers, follow_redirects=True, timeout=10)
+        self.client = httpx.AsyncClient(
+            headers=headers,
+            follow_redirects=True,
+            timeout=10,
+            http2=False,  # Forceer HTTP/1.1 om 400 errors te voorkomen
+        )
         self.content_hashes = set()
         self.robot_parsers = {}
         self.junk_url_patterns = ["/login", "/register", "?replytocom="]
@@ -300,9 +353,17 @@ class Crawler:  # pylint: disable=too-few-public-methods
         try:
             resp = await self.client.get(robots_url, timeout=5)
             if resp.status_code == 200:
-                rp.parse(resp.text.splitlines())
+                content = resp.text
+                # Debug: print eerste regels van robots.txt
+                print(f"robots.txt voor {domain}: {content[:150]}...")
+                rp.parse(content.splitlines())
+                # Check of parser correct is geladen
+                if rp.mtime() == 0:
+                    print(f"Warning: robots.txt voor {domain} lijkt leeg of ongeldig")
         except httpx.RequestError as e:
             print(f"Kon robots.txt niet lezen voor {domain}: {e}")
+        except Exception as e:
+            print(f"Onverwachte fout bij robots.txt voor {domain}: {e}")
         # Als robots.txt niet gevonden wordt (404) of er is een fout, gaan we uit van 'allow all'.
         self.robot_parsers[domain] = rp
         return rp
@@ -365,11 +426,14 @@ class Crawler:  # pylint: disable=too-few-public-methods
         try:
             # Regel: Respecteer robots.txt
             robot_parser = await self._get_robot_parser(url)
-            if not robot_parser.can_fetch(
-                self.client.headers["User-Agent"], url
-            ):
-                print(f"Uitgesloten door robots.txt: {url}")
-                return
+            # Fix: als robots.txt niet is geladen (mtime=0), sta alles toe
+            if robot_parser.mtime() == 0:
+                print(f"Geen robots.txt gevonden voor {url}, sta crawling toe")
+            else:
+                user_agent = self.client.headers["User-Agent"]
+                if not robot_parser.can_fetch(user_agent, url):
+                    print(f"Uitgesloten door robots.txt: {url}")
+                    return
 
             # Markeer URL als bezocht na de robots.txt check om race conditions te voorkomen.
             await self.redis.sadd("crawler:visited_urls", url)
@@ -377,42 +441,23 @@ class Crawler:  # pylint: disable=too-few-public-methods
             # Regel: Beleefdheidsvertraging
             await asyncio.sleep(15) # Verhoogd om 429 Too Many Requests te verminderen
 
-            # Regel: Gebruik HEAD om content type te checken
-            # Implementeer een retry-mechanisme voor 429-fouten
-            max_retries = 3
-            for attempt in range(max_retries):
-                try:
-                    head_res = await self.client.head(url, timeout=10)
-                    head_res.raise_for_status()
-                    break  # Succes, verlaat de loop
-                except httpx.HTTPStatusError as e:
-                    if e.response.status_code == 429 and attempt < max_retries - 1:
-                        # Probeer de Retry-After header te lezen die de server stuurt
-                        retry_after = e.response.headers.get("Retry-After")
-                        if retry_after and retry_after.isdigit():
-                            wait_time = int(retry_after)
-                        else:
-                            # Fallback naar exponentiële backoff als de header er niet is
-                            wait_time = 15 * (attempt + 1)
-
-                        print(
-                            f"429 Too Many Requests voor {url}. Wacht {wait_time}s "
-                            f"voor poging {attempt + 2}...")
-                        await asyncio.sleep(wait_time)
-                    elif e.response.status_code == 429 and attempt == max_retries - 1:
-                        # Na de laatste poging, voeg de URL achteraan de wachtrij toe.
-                        print(
-                            f"429 Fout na alle pogingen. URL {url} wordt "
-                            "achteraan de wachtrij geplaatst."
-                        )
-                        await self.redis.lpush("crawler:queue", url)
-                        return # Stop de huidige verwerking voor deze URL
-                    else:
-                        raise # Geef de fout door na de laatste poging of bij andere HTTP-fouten
-            else:  # Wordt uitgevoerd als de for-loop zonder 'break' eindigt
-                return # Stop verwerking als alle retries falen, bv. na een 429
-            content_type = head_res.headers.get("Content-Type", "")
-            content_length = int(head_res.headers.get("Content-Length", 0))
+            # HEAD request proberen, fallback naar GET als het faalt
+            content_type = ""
+            content_length = 0
+            try:
+                head_res = await self.client.head(url, timeout=10, follow_redirects=True)
+                if head_res.status_code == 200:
+                    content_type = head_res.headers.get("Content-Type", "")
+                    content_length = int(head_res.headers.get("Content-Length", 0))
+                else:
+                    print(f"HEAD request faalde met status {head_res.status_code} voor {url}, ga door met GET")
+            except Exception as e:
+                print(f"HEAD request error voor {url}: {e}, ga door met GET")
+            
+            # Als content_type leeg is, ga uit van HTML voor nu
+            if not content_type:
+                content_type = "text/html"
+                print(f"Geen content-type gevonden, ga uit van HTML voor {url}")
 
             # Bepaal het pad op basis van content type
             if "application/pdf" in content_type:
@@ -424,7 +469,9 @@ class Crawler:  # pylint: disable=too-few-public-methods
                     )
                     return
                 # Langere timeout voor PDF's
+                print(f"DEBUG: GET request voor PDF: {url}")
                 res = await self.client.get(url, timeout=30)
+                print(f"DEBUG: GET response status: {res.status_code}")
                 res.raise_for_status()
                 await self._process_pdf(url, res.content)
                 return # Stop verdere verwerking voor PDF's
@@ -433,8 +480,18 @@ class Crawler:  # pylint: disable=too-few-public-methods
                 return
 
             # Download de daadwerkelijke pagina
-            res = await self.client.get(url, timeout=10)
-            res.raise_for_status()
+            print(f"DEBUG: Start GET request voor HTML: {url}")
+            try:
+                res = await self.client.get(url, timeout=10)
+                print(f"DEBUG: GET response status: {res.status_code}")
+                print(f"DEBUG: GET response headers: {dict(res.headers)}")
+                res.raise_for_status()
+                print(f"DEBUG: GET succesvol, content length: {len(res.content)}")
+            except httpx.HTTPStatusError as e:
+                print(f"DEBUG: HTTP error bij GET: {e.response.status_code}")
+                print(f"DEBUG: Response headers: {dict(e.response.headers)}")
+                print(f"DEBUG: Response body (first 500): {e.response.text[:500]}")
+                raise
 
             soup = BeautifulSoup(res.content, "html.parser")
 
@@ -443,13 +500,20 @@ class Crawler:  # pylint: disable=too-few-public-methods
             canonical_link = soup.find("link", rel="canonical")
             if canonical_link and canonical_link.get("href"):
                 canonical_url = urljoin(str(res.url), canonical_link["href"])
-                if canonical_url != url:
+
+                # Vergelijk genormaliseerde URLs: een ontbrekende trailing slash
+                # is voor de homepage geen afzonderlijke pagina.
+                normal_url = url.rstrip("/") or url
+                normal_canonical = canonical_url.rstrip("/") or canonical_url
+
+                if normal_canonical != normal_url:
                     print(
                         f"Canonieke link gevonden voor {url} -> {canonical_url}"
                     )
-                    # Voeg de canonieke URL toe aan de wachtrij om te verwerken.
                     await self.redis.lpush("crawler:queue", canonical_url)
-                    return # Stop met het verwerken van de huidige (niet-canonieke) URL.
+                    return
+
+                print(f"Canonieke URL komt overeen: {url} -> {canonical_url}")
 
             # Variabele om bij te houden of we moeten indexeren.
             should_index = True
@@ -536,6 +600,13 @@ class Crawler:  # pylint: disable=too-few-public-methods
                     is_in_domain = link_netloc == self.start_domain or \
                                    link_netloc.endswith(f".{self.start_domain}")
 
+                    # Bewaar bij de EU-site alleen Engelse pagina's.
+                    path = urlparse(full_url).path.lower()
+
+                    # Vertaalde EU-pagina's eindigen doorgaans op _nl, _it, _fr, enz.
+                    if re.search(r"_[a-z]{2}$", path) and not path.endswith("_en"):
+                        continue
+
                     is_junk = any(p in full_url for p in self.junk_url_patterns)
                     if is_in_domain and not is_junk:
                         is_visited = await self.redis.sismember("crawler:visited_urls",
@@ -615,18 +686,27 @@ async def start_crawl(
             detail="Kan niet crawlen: MeiliSearch is niet beschikbaar.",
         )
 
-    # Controleer of de 'is_running' vlag al in Redis staat.
-    if await request.app.state.redis_client.get("crawler:is_running"):
+    # Voeg URL toe aan de wachtrij
+    await request.app.state.redis_client.lpush("crawler:queue", crawl_request.url)
+    queue_size = await request.app.state.redis_client.llen("crawler:queue")
+    
+    # Start crawler als er nog geen actief is
+    if not await request.app.state.redis_client.get("crawler:is_running"):
+        crawler = Crawler(
+            request.app.state.meili_index, request.app.state.redis_client
+        )
+        background_tasks.add_task(crawler.run, crawl_request.url)
         return {
-            "message": "Een crawl-taak is al actief. Wacht tot deze is voltooid."
+            "message": f"Crawl-taak voor {crawl_request.url} is gestart.",
+            "queue_size": queue_size,
+            "status": "started"
         }
-
-    # Creëer en start de crawler.
-    crawler = Crawler(
-        request.app.state.meili_index, request.app.state.redis_client
-    )
-    background_tasks.add_task(crawler.run, crawl_request.url)
-    return {"message": f"Crawl-taak voor {crawl_request.url} is gestart."}
+    else:
+        return {
+            "message": f"URL toegevoegd aan wachtrij (positie {queue_size}). Crawl is al bezig.",
+            "queue_size": queue_size,
+            "status": "queued"
+        }
 
 @app.post("/api/crawl/stop")
 async def stop_crawl(request: Request):
@@ -763,10 +843,7 @@ def _build_system_prompt() -> str:
         "Houd je aan de volgende regels:\n" # noqa: E501
     )
     part2 = (
-        "1. Baseer je antwoord UITSLUITEND op de informatie in de 'Context'. "
-        "Verzin geen informatie.\n"
-        "2. Als de context geen antwoord bevat, zeg dan: 'De zoekresultaten "
-        "bevatten onvoldoende informatie om deze vraag te beantwoorden.'\n"
+        "1. Gebruik de informatie in de Context als basis. Vul aan met algemene kennis als de context beperkt is.\n"        "2. Geef altijd een nuttig antwoord. Gebruik de fallback alleen als de context werkelijk niets zegt over het onderwerp.\n"
     )
     part3 = ("3. Structureer je antwoord als een FAQ of How‑To als de context dit toelaat. "
              "Gebruik Markdown.\n"
@@ -785,6 +862,65 @@ def _build_user_prompt(context: str, q: str) -> str:
         "Beantwoord de volgende vraag op basis van bovenstaande context:\n"
         f"{q}")
     return prompt_text
+
+
+
+@app.get("/api/benchmark/seo-geo")
+async def benchmark_seo_geo(url: str = None):
+    """Test SEO + geo scoring met echte URL of voorbeelden"""
+    
+    if url:
+        try:
+            async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
+                response = await client.get(url)
+                response.raise_for_status()
+                html = response.text
+                score = calculate_seo_score(html, url)
+                return {
+                    "url": url,
+                    "seo_geo_score": score,
+                    "max_score": 100,
+                    "html_length": len(html),
+                    "scoring_breakdown": {
+                        "title_tag": 20,
+                        "meta_description": 20,
+                        "h1_tag": 10,
+                        "images_with_alt": 10,
+                        "structured_data": 20,
+                        "mobile_viewport": 10,
+                        "geo_keywords": 10
+                    }
+                }
+        except Exception as e:
+            return {"error": str(e), "url": url}
+    else:
+        test_cases = [
+            {
+                "name": "EU institutionele pagina",
+                "html": """<html><title>European Commission - Brussels</title>
+                <meta name="description" content="Official EU site"><h1>Welcome</h1>
+                <img src="logo.png" alt="EU Logo"><div itemscope itemtype="https://schema.org/Organization">
+                <meta name="viewport" content="width=device-width">
+                <p>Location: Brussels, Belgium. Address: Rue de la Loi 200.</p></html>""",
+                "url": "https://commission.europa.eu"
+            },
+            {
+                "name": "Simpele pagina zonder SEO",
+                "html": "<html><body><p>Hello world</p></body></html>",
+                "url": "https://example.com"
+            }
+        ]
+        
+        results = []
+        for case in test_cases:
+            score = calculate_seo_score(case["html"], case["url"])
+            results.append({"name": case["name"], "seo_geo_score": score, "max_score": 100})
+        
+        return {
+            "benchmark": "SEO + Geo Scoring (examples)",
+            "results": results,
+            "note": "Voeg ?url=https://... toe om een live URL te scoren"
+        }
 
 
 @app.get("/api/summarize")

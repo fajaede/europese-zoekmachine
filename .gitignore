@@ -32,4 +32,58 @@ venv/
 /meili_data/
 
 # Root-level package manager files
-/package-lock.json
+/package-lock.json.env
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+
+# Logs
+*.log
+logs/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment secrets
+.env
+.env.local
+.env.*.local
+
+# Backups
+*.backup*
+*.backup-*/
+*.before-*
+*.pre-*
+*.working-*

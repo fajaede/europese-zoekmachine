@@ -1,0 +1,42 @@
+countries:
+  - code: NL
+    language: nl
+    queries:
+      - Europese Unie
+      - EU beleid
+
+  - code: DE
+    language: de
+    queries:
+      - Europäische Union
+      - EU-Politik
+
+  - code: FR
+    language: fr
+    queries:
+      - Union européenne
+      - politique de l'UE
+
+  - code: ES
+    language: es
+    queries:
+      - Unión Europea
+      - política de la UE
+
+  - code: IT
+    language: it
+    queries:
+      - Unione Europea
+      - politica dell'UE
+
+  - code: PL
+    language: pl
+    queries:
+      - Unia Europejska
+      - polityka UE
+
+  - code: GB
+    language: en
+    queries:
+      - European Union
+      - EU policy

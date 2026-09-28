@@ -5,6 +5,9 @@ services:
       dockerfile: backend/Dockerfile
     container_name: fajaede-backend
     restart: always
+    volumes:
+      - ./backend:/app/backend
+      - ./config:/app/config
     env_file:
       - .env
     ports:
