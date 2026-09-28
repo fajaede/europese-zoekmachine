@@ -1,3 +1,7 @@
+import sys
+sys.path.insert(0, "/root/europese-zoekmachine")
+
+from api.developer_api import router as developer_router
 """Backend API for the Europese Zoekmachine."""
 
 # Standard library imports
@@ -24,9 +28,10 @@ from fastapi import (
     Request,
     HTTPException,
     BackgroundTasks,
+
 )
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, HTMLResponse
 from meilisearch_python_async import (
     Client as AsyncMeiliClient,
     errors as meili_errors,
@@ -227,12 +232,20 @@ app.add_middleware(
 
 # Integreer de routers met de juiste prefixes
 app.include_router(monitoring_router, prefix="/monitoring", tags=["Monitoring"])
+app.include_router(developer_router, prefix="/api/developers", tags=["Developers"])
 
 @app.get("/")
 def read_root():
     """Stuurt de root URL door naar de API-documentatie."""
     return RedirectResponse(url="/docs")
 
+
+
+@app.get("/developers", response_class=HTMLResponse)
+async def developer_dashboard():
+    """Developer dashboard pagina."""
+    with open("backend/developer_dashboard.html", "r") as f:
+        return HTMLResponse(content=f.read(), status_code=200)
 
 @app.get("/health")
 def health_check():
