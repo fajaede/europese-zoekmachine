@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Developer Dashboard - Europese Zoekmachine API</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 40px 20px;
+        }
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 16px;
+            padding: 40px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+        }
+        h1 { color: #667eea; margin-bottom: 10px; font-size: 2.5em; }
+        .subtitle { color: #666; margin-bottom: 30px; font-size: 1.1em; }
+        .section {
+            margin: 30px 0;
+            padding: 25px;
+            background: #f8f9fa;
+            border-radius: 12px;
+            border-left: 4px solid #667eea;
+        }
+        .section h2 { color: #333; margin-bottom: 15px; font-size: 1.4em; }
+        .endpoint {
+            background: white;
+            padding: 15px;
+            margin: 10px 0;
+            border-radius: 8px;
+            border: 1px solid #e2e8f0;
+        }
+        .method {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 6px;
+            font-weight: bold;
+            font-size: 0.85em;
+            margin-right: 10px;
+        }
+        .post { background: #48bb78; color: white; }
+        .get { background: #4299e1; color: white; }
+        code {
+            background: #edf2f7;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-family: 'Courier New', monospace;
+            color: #e53e3e;
+        }
+        .example {
+            background: #1a202c;
+            color: #e2e8f0;
+            padding: 20px;
+            border-radius: 8px;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9em;
+            overflow-x: auto;
+            margin: 15px 0;
+        }
+        .warning {
+            background: #fffaf0;
+            border: 1px solid #f6ad55;
+            color: #c05621;
+            padding: 15px;
+            border-radius: 8px;
+            margin: 15px 0;
+        }
+        .step {
+            background: white;
+            padding: 20px;
+            margin: 15px 0;
+            border-radius: 8px;
+            border: 2px solid #667eea;
+        }
+        .step-number {
+            display: inline-block;
+            width: 30px;
+            height: 30px;
+            background: #667eea;
+            color: white;
+            border-radius: 50%;
+            text-align: center;
+            line-height: 30px;
+            font-weight: bold;
+            margin-right: 10px;
+        }
+        a { color: #667eea; text-decoration: none; }
+        a:hover { text-decoration: underline; }
+        .btn {
+            display: inline-block;
+            background: #667eea;
+            color: white;
+            padding: 12px 24px;
+            border-radius: 8px;
+            text-decoration: none;
+            font-weight: bold;
+            margin: 10px 10px 10px 0;
+        }
+        .btn:hover { background: #5568d3; text-decoration: none; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🚀 Developer Dashboard</h1>
+        <p class="subtitle">Europese Zoekmachine API - SEO & Summarization Tools</p>
+
+        <div class="section">
+            <h2>📝 Snel Starten</h2>
+            <div class="step">
+                <span class="step-number">1</span>
+                <strong>Registreer je email</strong> - Krijg direct een API key
+            </div>
+            <div class="step">
+                <span class="step-number">2</span>
+                <strong>Gebruik de API key</strong> - Voeg toe aan je requests
+            </div>
+            <div class="step">
+                <span class="step-number">3</span>
+                <strong>Genereer SEO content</strong> - Voor je EU nieuws site
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>🔑 API Endpoints</h2>
+            
+            <div class="endpoint">
+                <span class="method post">POST</span>
+                <code>/api/developers/register</code>
+                <p style="margin-top: 10px; color: #666;">Registreer een nieuwe developer</p>
+                <div class="example">
+{
+  "email": "jij@voorbeeld.nl",
+  "project_name": "Mijn EU News Site"
+}
+
+Response:
+{
+  "api_key": "sk_eu_abc123xyz...",
+  "email": "jij@voorbeeld.nl",
+  "daily_limit": 100,
+  "message": "Succesvol geregistreerd!"
+}
+                </div>
+            </div>
+
+            <div class="endpoint">
+                <span class="method post">POST</span>
+                <code>/api/developers/seo/generate</code>
+                <p style="margin-top: 10px; color: #666;">Genereer SEO metadata voor content</p>
+                <div class="example">
+Headers: X-API-Key: sk_eu_jouw_key
+
+{
+  "content": "EU Parlement stemt over nieuwe klimaatwet...",
+  "url": "https://mijnsite.nl/eu-klimaat",
+  "language": "nl"
+}
+
+Response:
+{
+  "title": "EU Klimaatwet 2026: Wat Betekent Dit?",
+  "meta_description": "Het EU Parlement heeft gestemd over de nieuwe klimaatwet...",
+  "keywords": ["EU", "klimaat", "wet", "parlement"],
+  "score": 87
+}
+                </div>
+            </div>
+
+            <div class="endpoint">
+                <span class="method get">GET</span>
+                <code>/api/developers/usage</code>
+                <p style="margin-top: 10px; color: #666;">Bekijk je usage statistics</p>
+                <div class="example">
+Headers: X-API-Key: sk_eu_jouw_key
+
+Response:
+{
+  "email": "jij@voorbeeld.nl",
+  "project_name": "Mijn EU News Site",
+  "daily_limit": 100,
+  "requests_today": 5,
+  "total_requests": 42,
+  "created_at": "2026-09-28 18:00:00"
+}
+                </div>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>⚠️ Belangrijk</h2>
+            <div class="warning">
+                <strong>Bewaar je API key veilig!</strong><br>
+                Deel hem nooit publiek. Gebruik environment variables in je code.
+            </div>
+            <p><strong>Rate Limit:</strong> 100 requests per dag (gratis tier)</p>
+            <p><strong>Support:</strong> Mail naar support@europese-zoekmachine.nl</p>
+        </div>
+
+        <div class="section">
+            <h2>💻 Voorbeeld Code</h2>
+            
+            <h3 style="margin: 15px 0 10px;">Python</h3>
+            <div class="example">
+import requests
+
+API_KEY = "sk_eu_jouw_key"
+
+# SEO genereren
+response = requests.post(
+    "http://localhost:8000/api/developers/seo/generate",
+    headers={"X-API-Key": API_KEY},
+    json={
+        "content": "EU Parlement stemt over nieuwe klimaatwet...",
+        "url": "https://mijnsite.nl/eu-klimaat",
+        "language": "nl"
+    }
+)
+
+seo = response.json()
+print(f"Title: {seo['title']}")
+print(f"Description: {seo['meta_description']}")
+print(f"Score: {seo['score']}")
+            </div>
+
+            <h3 style="margin: 15px 0 10px;">JavaScript/Node.js</h3>
+            <div class="example">
+const API_KEY = "sk_eu_jouw_key";
+
+const response = await fetch("http://localhost:8000/api/developers/seo/generate", {
+    method: "POST",
+    headers: {
+        "X-API-Key": API_KEY,
+        "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+        content: "EU Parlement stemt over nieuwe klimaatwet...",
+        url: "https://mijnsite.nl/eu-klimaat",
+        language: "nl"
+    })
+});
+
+const seo = await response.json();
+console.log("Title:", seo.title);
+console.log("Description:", seo.meta_description);
+            </div>
+
+            <h3 style="margin: 15px 0 10px;">cURL</h3>
+            <div class="example">
+curl -X POST http://localhost:8000/api/developers/seo/generate \
+  -H "X-API-Key: sk_eu_jouw_key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "content": "EU Parlement stemt over nieuwe klimaatwet...",
+    "url": "https://mijnsite.nl/eu-klimaat",
+    "language": "nl"
+  }'
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>📚 Meer Documentatie</h2>
+            <a href="/docs" class="btn">📖 Swagger API Docs</a>
+            <a href="/health" class="btn">❤️ Health Check</a>
+            <a href="/api/search?q=EU" class="btn">🔍 Test Search API</a>
+        </div>
+
+        <p style="text-align: center; margin-top: 30px; color: #999; font-size: 0.9em;">
+            Europese Zoekmachine API v1.0 | Gebouwd met ❤️ voor EU transparency
+        </p>
+    </div>
+</body>
+</html>
