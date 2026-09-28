@@ -33,10 +33,9 @@ from meilisearch_python_async import (
 )
 from pydantic import BaseModel
 from dotenv import load_dotenv
+from monitoring import router as monitoring_router
 
 # Local application imports
-from api.routes.generate_seo import router as seo_router
-from api.routes.builder import router as builder_router
 
 # Laad environment variables uit het .env bestand in de root directory
 load_dotenv()
@@ -227,8 +226,7 @@ app.add_middleware(
 )
 
 # Integreer de routers met de juiste prefixes
-app.include_router(seo_router, prefix="/api/seo", tags=["SEO Generator"])
-app.include_router(builder_router, prefix="/api/builder", tags=["Website Builder"])
+app.include_router(monitoring_router, prefix="/monitoring", tags=["Monitoring"])
 
 @app.get("/")
 def read_root():
@@ -296,6 +294,32 @@ async def search(request: Request, q: str, limit: int = 10, category: str = None
         raise HTTPException(
             status_code=500, detail="Er is een onverwachte fout opgetreden bij het zoeken."
         ) from e
+
+
+
+def determine_category(url: str, title: str = "", content: str = "") -> str:
+    """Bepaal categorie op basis van URL, titel en content."""
+    text = f"{url} {title} {content}".lower()
+    url_lower = url.lower()
+    
+    # News categorie - alleen als URL of titel duidelijk news bevat
+    if any(term in url_lower for term in [
+        "/news", "/nieuws", "/press-release", "/press_release",
+        "/featured-news", "/events/", "/visual-stories"
+    ]):
+        return "news"
+    
+    # Finance categorie - check URL eerst
+    if any(term in url_lower for term in [
+        "/budget", "/finance", "/financial", "/economy", "/economic",
+        "/funding", "/grants", "/subsidies", "/public-contracts",
+        "/import-export", "/doing-business", "/funding-grants-subsidies",
+        "/euro/", "/euro-en"
+    ]):
+        return "finance"
+    
+    # Default
+    return "web"
 
 
 class Crawler:  # pylint: disable=too-few-public-methods
@@ -554,6 +578,7 @@ class Crawler:  # pylint: disable=too-few-public-methods
                         "url": url,
                         "title": title,
                         "content": content,
+                        "category": determine_category(url, title, content),
                         "structured_data": {},  # Nieuw veld voor gestructureerde data
                     }
 
@@ -573,8 +598,13 @@ class Crawler:  # pylint: disable=too-few-public-methods
                         document["structured_data"] = {"items": structured_data_list}
                         print(f"Gestructureerde data gevonden op: {url}")
 
-                    await self.meili_index.add_documents([document])
-                    print(f"Geïndexeerd: {url}")
+                    try:
+                        await self.meili_index.add_documents([document])
+                        print(f"Geïndexeerd: {url}")
+                    except Exception as e:
+                        print(f"MEILI ERROR bij indexeren {url}: {e}")
+                        import traceback
+                        traceback.print_exc()
 
             # Voeg nieuwe links toe aan de wachtrij, tenzij 'nofollow' is ingesteld.
             if should_follow:
@@ -996,3 +1026,13 @@ async def _call_llm(
         raise HTTPException(
             status_code=503, detail="AI‑diensten zijn momenteel niet beschikbaar."
         ) from e
+
+# Serve dashboard
+from fastapi.responses import HTMLResponse, FileResponse
+import os
+
+@app.get("/dashboard", response_class=HTMLResponse)
+async def get_dashboard():
+    """Modern monitoring dashboard."""
+    dashboard_path = os.path.join(os.path.dirname(__file__), "dashboard.html")
+    return FileResponse(dashboard_path)
