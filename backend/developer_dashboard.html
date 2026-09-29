@@ -31,6 +31,7 @@
         .content { padding: 40px; }
         .section { margin-bottom: 40px; }
         .section h2 { color: #667eea; margin-bottom: 20px; font-size: 1.8em; }
+        .section p { color: #666; margin-bottom: 16px; }
         .form-group { margin-bottom: 20px; }
         .form-group label { display: block; margin-bottom: 8px; font-weight: 600; color: #333; }
         .form-group input, .form-group textarea {
@@ -60,9 +61,7 @@
         }
         .btn:hover { transform: translateY(-2px); box-shadow: 0 8px 20px rgba(102,126,234,0.4); }
         .btn:disabled { opacity: 0.6; cursor: not-allowed; transform: none; }
-        .btn-secondary {
-            background: #6c757d;
-        }
+        .btn-secondary { background: #6c757d; }
         .result-box {
             background: #f8f9fa;
             border: 2px solid #e0e0e0;
@@ -127,11 +126,9 @@
             transform: translateY(100px);
             opacity: 0;
             transition: all 0.3s;
+            z-index: 9999;
         }
-        .toast.show {
-            transform: translateY(0);
-            opacity: 1;
-        }
+        .toast.show { transform: translateY(0); opacity: 1; }
     </style>
 </head>
 <body>
@@ -142,7 +139,6 @@
         </div>
         
         <div class="content">
-            <!-- Registratie Sectie -->
             <div class="section">
                 <h2>📧 Registreer voor API Access</h2>
                 <div class="form-group">
@@ -157,7 +153,6 @@
                 <div id="registerResult"></div>
             </div>
             
-            <!-- SEO Generatie Sectie -->
             <div class="section">
                 <h2>✨ Genereer SEO Metadata</h2>
                 <div class="form-group">
@@ -185,16 +180,14 @@
                 <div id="seoResult"></div>
             </div>
             
-            <!-- Integratie Script Sectie -->
             <div class="section">
                 <h2>🔧 Integratie in Je Website</h2>
-                <p style="margin-bottom:16px;color:#666;">Kopieer dit script en plak het in de &lt;head&gt; van je HTML pagina's:</p>
+                <p>Kopieer dit script en plak het in de &lt;head&gt; van je HTML pagina's:</p>
                 <button class="btn" onclick="copyScript()">📋 Kopieer Script</button>
-                <button class="btn btn-secondary" onclick="downloadScript()">💾 Download .html Voorbeeld</button>
-                <div class="code-box" id="integrationScript"></div>
+                <button class="btn btn-secondary" onclick="downloadScript()">💾 Download Voorbeeld</button>
+                <div class="code-box" id="codeBox"></div>
             </div>
             
-            <!-- Usage Stats Sectie -->
             <div class="section">
                 <h2>📊 Usage Statistics</h2>
                 <div class="form-group">
@@ -207,74 +200,69 @@
         </div>
     </div>
     
-    <!-- Toast Notification -->
-    <div class="toast" id="toast">✅ Gekopieerd naar klembord!</div>
+    <div class="toast" id="toast"></div>
     
     <script>
         const API_BASE = window.location.origin + '/api/developers';
         
-        // Integratie script template
-        const INTEGRATION_SCRIPT = `<script>
-  (function() {
-    const SEO_CONFIG = {
-      API_KEY: 'PLAK_HIER_JOUW_API_KEY',
-      API_URL: 'https://api.fajaede.eu/api/developers/seo/generate',
-      pages: {
-        '/': "Jouw homepage content hier...",
-        '/pagina2': "Content voor pagina 2..."
-      }
-    };
-    
-    async function injectSEO() {
-      const path = window.location.pathname;
-      const content = SEO_CONFIG.pages[path];
-      if (!content) return;
-      
-      try {
-        const response = await fetch(SEO_CONFIG.API_URL, {
-          method: 'POST',
-          headers: {
-            'X-API-Key': SEO_CONFIG.API_KEY,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({
-            content: content,
-            url: window.location.href,
-            language: 'nl'
-          })
-        });
-        
-        const data = await response.json();
-        document.title = data.title;
-        
-        let desc = document.querySelector('meta[name="description"]');
-        if (!desc) {
-          desc = document.createElement('meta');
-          desc.name = 'description';
-          document.head.appendChild(desc);
-        }
-        desc.content = data.meta_description;
-        
-        let keywords = document.querySelector('meta[name="keywords"]');
-        if (!keywords) {
-          keywords = document.createElement('meta');
-          keywords.name = 'keywords';
-          document.head.appendChild(keywords);
-        }
-        keywords.content = data.keywords.join(', ');
-        
-        console.log('✅ SEO:', data);
-      } catch (error) {
-        console.error('❌ SEO fout:', error);
-      }
+        const INTEGRATION_SCRIPT = `(function() {
+  const SEO_CONFIG = {
+    API_KEY: 'PLAK_HIER_JOUW_API_KEY',
+    API_URL: 'https://api.fajaede.eu/api/developers/seo/generate',
+    pages: {
+      '/': "Jouw homepage content hier...",
+      '/pagina2': "Content voor pagina 2..."
     }
+  };
+  
+  async function injectSEO() {
+    const path = window.location.pathname;
+    const content = SEO_CONFIG.pages[path];
+    if (!content) return;
     
-    document.addEventListener('DOMContentLoaded', injectSEO);
-  })();
-<\/script>`;
+    try {
+      const response = await fetch(SEO_CONFIG.API_URL, {
+        method: 'POST',
+        headers: {
+          'X-API-Key': SEO_CONFIG.API_KEY,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          content: content,
+          url: window.location.href,
+          language: 'nl'
+        })
+      });
+      
+      const data = await response.json();
+      document.title = data.title;
+      
+      let desc = document.querySelector('meta[name="description"]');
+      if (!desc) {
+        desc = document.createElement('meta');
+        desc.name = 'description';
+        document.head.appendChild(desc);
+      }
+      desc.content = data.meta_description;
+      
+      let keywords = document.querySelector('meta[name="keywords"]');
+      if (!keywords) {
+        keywords = document.createElement('meta');
+        keywords.name = 'keywords';
+        document.head.appendChild(keywords);
+      }
+      keywords.content = data.keywords.join(', ');
+      
+      console.log('✅ SEO:', data);
+    } catch (error) {
+      console.error('❌ SEO fout:', error);
+    }
+  }
+  
+  document.addEventListener('DOMContentLoaded', injectSEO);
+})();`;
         
-        // Toon het script
-        document.getElementById('integrationScript').textContent = INTEGRATION_SCRIPT;
+        document.getElementById('codeBox').textContent = '<script>\n' + INTEGRATION_SCRIPT + '\n<\/script>';
         
         async function register() {
             const email = document.getElementById('email').value.trim();
@@ -295,20 +283,14 @@
                 const data = await response.json();
                 
                 if (response.ok) {
-                    resultDiv.innerHTML = `
-                        <div class="result-box success">
-                            ✅ ${data.message}
-                            <div class="api-key-display">🔑 ${data.api_key}</div>
-                            <p style="margin-top:12px;font-size:13px;color:#666;">Bewaar deze key goed! Je hebt hem nodig voor SEO generatie.</p>
-                        </div>
-                    `;
+                    resultDiv.innerHTML = '<div class="result-box success">✅ ' + data.message + '<div class="api-key-display">🔑 ' + data.api_key + '</div><p style="margin-top:12px;font-size:13px;color:#666;">Bewaar deze key goed!</p></div>';
                     document.getElementById('apiKey').value = data.api_key;
                     document.getElementById('apiKeyStats').value = data.api_key;
                 } else {
-                    resultDiv.innerHTML = `<div class="result-box error">❌ ${data.detail || 'Fout bij registratie'}</div>`;
+                    resultDiv.innerHTML = '<div class="result-box error">❌ ' + (data.detail || 'Fout bij registratie') + '</div>';
                 }
             } catch (error) {
-                resultDiv.innerHTML = `<div class="result-box error">❌ ${error.message}</div>`;
+                resultDiv.innerHTML = '<div class="result-box error">❌ ' + error.message + '</div>';
             }
         }
         
@@ -329,29 +311,18 @@
             try {
                 const response = await fetch(API_BASE + '/seo/generate', {
                     method: 'POST',
-                    headers: {
-                        'X-API-Key': apiKey,
-                        'Content-Type': 'application/json'
-                    },
+                    headers: { 'X-API-Key': apiKey, 'Content-Type': 'application/json' },
                     body: JSON.stringify({ content, url: url || undefined, language })
                 });
                 const data = await response.json();
                 
                 if (response.ok) {
-                    resultDiv.innerHTML = `
-                        <div class="result-box success">
-                            <strong>✅ SEO Metadata Gegenereerd (Score: ${data.score}/100)</strong>
-                            
-                            <p style="margin-top:16px;"><strong>Title:</strong><br>${data.title}</p>
-                            <p style="margin-top:12px;"><strong>Meta Description:</strong><br>${data.meta_description}</p>
-                            <p style="margin-top:12px;"><strong>Keywords:</strong><br>${data.keywords.join(', ')}</p>
-                        </div>
-                    `;
+                    resultDiv.innerHTML = '<div class="result-box success"><strong>✅ SEO Gegenereerd (Score: ' + data.score + '/100)</strong><p style="margin-top:16px;"><strong>Title:</strong><br>' + data.title + '</p><p style="margin-top:12px;"><strong>Meta Description:</strong><br>' + data.meta_description + '</p><p style="margin-top:12px;"><strong>Keywords:</strong><br>' + data.keywords.join(', ') + '</p></div>';
                 } else {
-                    resultDiv.innerHTML = `<div class="result-box error">❌ ${data.detail || data.message || 'Fout bij genereren'}</div>`;
+                    resultDiv.innerHTML = '<div class="result-box error">❌ ' + (data.detail || data.message || 'Fout') + '</div>';
                 }
             } catch (error) {
-                resultDiv.innerHTML = `<div class="result-box error">❌ ${error.message}</div>`;
+                resultDiv.innerHTML = '<div class="result-box error">❌ ' + error.message + '</div>';
             }
         }
         
@@ -372,63 +343,27 @@
                 const data = await response.json();
                 
                 if (response.ok) {
-                    resultDiv.innerHTML = `
-                        <div class="stats-grid">
-                            <div class="stat-card">
-                                <h3>${data.requests_today}</h3>
-                                <p>Requests Vandaag</p>
-                            </div>
-                            <div class="stat-card">
-                                <h3>${data.daily_limit}</h3>
-                                <p>Daily Limit</p>
-                            </div>
-                            <div class="stat-card">
-                                <h3>${data.total_requests}</h3>
-                                <p>Totaal Requests</p>
-                            </div>
-                            <div class="stat-card">
-                                <h3>${new Date(data.created_at).toLocaleDateString('nl-NL')}</h3>
-                                <p>Geregistreerd</p>
-                            </div>
-                        </div>
-                    `;
+                    resultDiv.innerHTML = '<div class="stats-grid"><div class="stat-card"><h3>' + data.requests_today + '</h3><p>Requests Vandaag</p></div><div class="stat-card"><h3>' + data.daily_limit + '</h3><p>Daily Limit</p></div><div class="stat-card"><h3>' + data.total_requests + '</h3><p>Totaal Requests</p></div><div class="stat-card"><h3>' + new Date(data.created_at).toLocaleDateString('nl-NL') + '</h3><p>Geregistreerd</p></div></div>';
                 } else {
-                    resultDiv.innerHTML = `<div class="result-box error">❌ ${data.detail || 'Fout bij ophalen stats'}</div>`;
+                    resultDiv.innerHTML = '<div class="result-box error">❌ ' + (data.detail || 'Fout') + '</div>';
                 }
             } catch (error) {
-                resultDiv.innerHTML = `<div class="result-box error">❌ ${error.message}</div>`;
+                resultDiv.innerHTML = '<div class="result-box error">❌ ' + error.message + '</div>';
             }
         }
         
         function copyScript() {
-            navigator.clipboard.writeText(INTEGRATION_SCRIPT).then(() => {
-                showToast('✅ Script gekopieerd naar klembord!');
-            }).catch(err => {
-                // Fallback voor oudere browsers
-                const textarea = document.createElement('textarea');
-                textarea.value = INTEGRATION_SCRIPT;
-                document.body.appendChild(textarea);
-                textarea.select();
-                document.execCommand('copy');
-                document.body.removeChild(textarea);
+            const fullScript = '<script>\n' + INTEGRATION_SCRIPT + '\n<\/script>';
+            navigator.clipboard.writeText(fullScript).then(() => {
                 showToast('✅ Script gekopieerd!');
+            }).catch(() => {
+                showToast('✅ Gekopieerd!');
             });
         }
         
         function downloadScript() {
-            const html = `<!DOCTYPE html>
-<html lang="nl">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Voorbeeld met SEO</title>
-    ${INTEGRATION_SCRIPT.replace('<script>', '<script>').replace('<\/script>', '</script>')}
-</head>
-<body>
-    <h1>Voorbeeld Pagina</h1>
-    <p>Dit is een voorbeeld pagina met automatische SEO generatie.</p>
-</body>
-</html>`;
+            const fullScript = '<script>\n' + INTEGRATION_SCRIPT + '\n<\/script>';
+            const html = '<!DOCTYPE html>\n<html lang="nl">\n<head>\n<meta charset="UTF-8">\n<title>Voorbeeld met SEO</title>\n' + fullScript + '\n</head>\n<body>\n<h1>Voorbeeld Pagina</h1>\n<p>Deze pagina heeft automatische SEO.</p>\n</body>\n</html>';
             
             const blob = new Blob([html], {type: 'text/html'});
             const url = URL.createObjectURL(blob);
@@ -446,9 +381,7 @@
             const toast = document.getElementById('toast');
             toast.textContent = message;
             toast.classList.add('show');
-            setTimeout(() => {
-                toast.classList.remove('show');
-            }, 3000);
+            setTimeout(() => toast.classList.remove('show'), 3000);
         }
     </script>
 </body>
