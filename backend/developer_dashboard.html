@@ -55,9 +55,14 @@
             font-weight: 600;
             cursor: pointer;
             transition: transform 0.2s, box-shadow 0.2s;
+            margin-right: 10px;
+            margin-bottom: 10px;
         }
         .btn:hover { transform: translateY(-2px); box-shadow: 0 8px 20px rgba(102,126,234,0.4); }
         .btn:disabled { opacity: 0.6; cursor: not-allowed; transform: none; }
+        .btn-secondary {
+            background: #6c757d;
+        }
         .result-box {
             background: #f8f9fa;
             border: 2px solid #e0e0e0;
@@ -96,7 +101,37 @@
         }
         .stat-card h3 { font-size: 2.5em; margin-bottom: 8px; }
         .stat-card p { opacity: 0.9; }
-        .loading { opacity: 0.6; pointer-events: none; }
+        .code-box {
+            background: #1e1e1e;
+            color: #d4d4d4;
+            border: 2px solid #667eea;
+            border-radius: 8px;
+            padding: 20px;
+            margin-top: 20px;
+            font-family: 'Courier New', monospace;
+            font-size: 13px;
+            white-space: pre-wrap;
+            word-break: break-word;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        .toast {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            background: #4caf50;
+            color: white;
+            padding: 16px 24px;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+            transform: translateY(100px);
+            opacity: 0;
+            transition: all 0.3s;
+        }
+        .toast.show {
+            transform: translateY(0);
+            opacity: 1;
+        }
     </style>
 </head>
 <body>
@@ -150,6 +185,15 @@
                 <div id="seoResult"></div>
             </div>
             
+            <!-- Integratie Script Sectie -->
+            <div class="section">
+                <h2>🔧 Integratie in Je Website</h2>
+                <p style="margin-bottom:16px;color:#666;">Kopieer dit script en plak het in de &lt;head&gt; van je HTML pagina's:</p>
+                <button class="btn" onclick="copyScript()">📋 Kopieer Script</button>
+                <button class="btn btn-secondary" onclick="downloadScript()">💾 Download .html Voorbeeld</button>
+                <div class="code-box" id="integrationScript"></div>
+            </div>
+            
             <!-- Usage Stats Sectie -->
             <div class="section">
                 <h2>📊 Usage Statistics</h2>
@@ -163,8 +207,74 @@
         </div>
     </div>
     
+    <!-- Toast Notification -->
+    <div class="toast" id="toast">✅ Gekopieerd naar klembord!</div>
+    
     <script>
         const API_BASE = window.location.origin + '/api/developers';
+        
+        // Integratie script template
+        const INTEGRATION_SCRIPT = `<script>
+  (function() {
+    const SEO_CONFIG = {
+      API_KEY: 'PLAK_HIER_JOUW_API_KEY',
+      API_URL: 'https://api.fajaede.eu/api/developers/seo/generate',
+      pages: {
+        '/': "Jouw homepage content hier...",
+        '/pagina2': "Content voor pagina 2..."
+      }
+    };
+    
+    async function injectSEO() {
+      const path = window.location.pathname;
+      const content = SEO_CONFIG.pages[path];
+      if (!content) return;
+      
+      try {
+        const response = await fetch(SEO_CONFIG.API_URL, {
+          method: 'POST',
+          headers: {
+            'X-API-Key': SEO_CONFIG.API_KEY,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            content: content,
+            url: window.location.href,
+            language: 'nl'
+          })
+        });
+        
+        const data = await response.json();
+        document.title = data.title;
+        
+        let desc = document.querySelector('meta[name="description"]');
+        if (!desc) {
+          desc = document.createElement('meta');
+          desc.name = 'description';
+          document.head.appendChild(desc);
+        }
+        desc.content = data.meta_description;
+        
+        let keywords = document.querySelector('meta[name="keywords"]');
+        if (!keywords) {
+          keywords = document.createElement('meta');
+          keywords.name = 'keywords';
+          document.head.appendChild(keywords);
+        }
+        keywords.content = data.keywords.join(', ');
+        
+        console.log('✅ SEO:', data);
+      } catch (error) {
+        console.error('❌ SEO fout:', error);
+      }
+    }
+    
+    document.addEventListener('DOMContentLoaded', injectSEO);
+  })();
+<\/script>`;
+        
+        // Toon het script
+        document.getElementById('integrationScript').textContent = INTEGRATION_SCRIPT;
         
         async function register() {
             const email = document.getElementById('email').value.trim();
@@ -192,7 +302,6 @@
                             <p style="margin-top:12px;font-size:13px;color:#666;">Bewaar deze key goed! Je hebt hem nodig voor SEO generatie.</p>
                         </div>
                     `;
-                    // Auto-fill API key in andere velden
                     document.getElementById('apiKey').value = data.api_key;
                     document.getElementById('apiKeyStats').value = data.api_key;
                 } else {
@@ -289,6 +398,57 @@
             } catch (error) {
                 resultDiv.innerHTML = `<div class="result-box error">❌ ${error.message}</div>`;
             }
+        }
+        
+        function copyScript() {
+            navigator.clipboard.writeText(INTEGRATION_SCRIPT).then(() => {
+                showToast('✅ Script gekopieerd naar klembord!');
+            }).catch(err => {
+                // Fallback voor oudere browsers
+                const textarea = document.createElement('textarea');
+                textarea.value = INTEGRATION_SCRIPT;
+                document.body.appendChild(textarea);
+                textarea.select();
+                document.execCommand('copy');
+                document.body.removeChild(textarea);
+                showToast('✅ Script gekopieerd!');
+            });
+        }
+        
+        function downloadScript() {
+            const html = `<!DOCTYPE html>
+<html lang="nl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Voorbeeld met SEO</title>
+    ${INTEGRATION_SCRIPT.replace('<script>', '<script>').replace('<\/script>', '</script>')}
+</head>
+<body>
+    <h1>Voorbeeld Pagina</h1>
+    <p>Dit is een voorbeeld pagina met automatische SEO generatie.</p>
+</body>
+</html>`;
+            
+            const blob = new Blob([html], {type: 'text/html'});
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'voorbeeld-seo.html';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+            showToast('✅ Voorbeeld gedownload!');
+        }
+        
+        function showToast(message) {
+            const toast = document.getElementById('toast');
+            toast.textContent = message;
+            toast.classList.add('show');
+            setTimeout(() => {
+                toast.classList.remove('show');
+            }, 3000);
         }
     </script>
 </body>
