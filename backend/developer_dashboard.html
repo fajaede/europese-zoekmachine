@@ -264,25 +264,25 @@
                     <span class="tooltip-icon">?</span>
                     <span class="tooltip-content">
                         <strong>Wat is de "pages" parameter?</strong><br><br>
-                        De <code>pages</code> parameter vertelt de zoekmachine welke pagina's op je website bestaan en waar ze over gaan.<br><br>
-                        <strong>Waarom is dit nodig?</strong><br>
-                        De zoekmachine gebruikt deze informatie om beter te begrijpen waar je website over gaat. Dit helpt bij het indexeren en zorgt dat je site gevonden wordt voor relevante zoekopdrachten.<br><br>
+                        De <code>pages</code> parameter vertelt de zoekmachine waar deze specifieke pagina over gaat.<br><br>
                         <strong>Hoe vul je het in?</strong><br>
-                        1. Maak een lijst van al je website pagina's<br>
-                        2. Schrijf per pagina 1-2 zinnen over de content<br>
-                        3. Gebruik keywords waar mensen op zoeken<br><br>
-                        <strong>Voorbeeld:</strong>
+                        1. Ga naar elke pagina van je website<br>
+                        2. Plak het script in de &lt;head&gt;<br>
+                        3. Vul bij "pages:" alleen die 1 pagina in<br><br>
+                        <strong>Voorbeeld voor homepage:</strong>
                         <pre><code>pages: {
-  '/': "Jouw bedrijfsnaam - Korte beschrijving van je homepage met belangrijke keywords.",
-  '/diensten': "Beschrijving van je diensten. Noem je belangrijkste services.",
-  '/over-ons': "Verhaal over je bedrijf, wanneer opgericht, waar gevestigd.",
-  '/contact': "Contactgegevens: adres, telefoon, email, openingstijden."
+  '/': "Jouw bedrijfsnaam - Korte beschrijving van je homepage met belangrijke keywords."
 }</code></pre>
+                        <strong>Voorbeeld voor diensten pagina:</strong>
+                        <pre><code>pages: {
+  '/diensten': "Beschrijving van je diensten. Noem je belangrijkste services."
+}</code></pre>
+                        <strong>Herhaal dit voor elke pagina!</strong><br><br>
                         <strong>Tips:</strong>
-                        • Gebruik natuurlijke taal, geen keyword stuffing<br>
-                        • Houd het kort en krachtig (1-3 zinnen per pagina)<br>
-                        • Gebruik woorden die klanten zouden zoeken<br>
-                        • Vermijd jargon, schrijf voor je doelgroep
+                        • Gebruik natuurlijke taal<br>
+                        • Houd het kort (1-3 zinnen)<br>
+                        • Gebruik woorden die klanten zoeken<br>
+                        • Vermijd jargon
                     </span>
                 </span>
             </h2>
