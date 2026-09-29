@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title data-seo="title">Laad SEO...</title>
+    <meta name="description" data-seo="description" content="Laad SEO...">
+    <meta name="keywords" data-seo="keywords" content="">
+    <meta property="og:title" data-seo="og:title" content="">
+    <meta property="og:description" data-seo="og:description" content="">
+    
+    <style>
+        body { font-family: system-ui, sans-serif; max-width: 800px; margin: 40px auto; padding: 20px; }
+        .seo-status { background: #e8f5e9; border: 2px solid #4caf50; padding: 16px; border-radius: 8px; margin: 20px 0; }
+        .error { background: #ffebee; border-color: #f44336; }
+        code { background: #f5f5f5; padding: 2px 6px; border-radius: 4px; }
+    </style>
+    
+    <script>
+        const SEO_CONFIG = {
+            API_URL: 'https://api.fajaede.eu/api/developers/seo/generate',
+            API_KEY: 'sk_eu__4U1-F7brB93k_0YRWjqhFNvpsJGIPYn',
+            CONTENT_SELECTOR: '[data-seo-content]',
+            DEBUG: true
+        };
+        
+        async function injectSEO() {
+            const contentElement = document.querySelector(SEO_CONFIG.CONTENT_SELECTOR);
+            if (!contentElement) return;
+            
+            const content = contentElement.textContent.trim();
+            if (!content) return;
+            
+            try {
+                const response = await fetch(SEO_CONFIG.API_URL, {
+                    method: 'POST',
+                    headers: {
+                        'X-API-Key': SEO_CONFIG.API_KEY,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        content: content,
+                        url: window.location.href,
+                        language: 'nl'
+                    })
+                });
+                
+                const data = await response.json();
+                
+                document.querySelector('[data-seo="title"]').textContent = data.title;
+                document.querySelector('[data-seo="description"]').setAttribute('content', data.meta_description);
+                document.querySelector('[data-seo="keywords"]').setAttribute('content', data.keywords.join(', '));
+                document.querySelector('[data-seo="og:title"]').setAttribute('content', data.title);
+                document.querySelector('[data-seo="og:description"]').setAttribute('content', data.meta_description);
+                
+                console.log('✅ SEO:', data);
+            } catch (error) {
+                console.error('❌ SEO fout:', error);
+            }
+        }
+        
+        document.addEventListener('DOMContentLoaded', injectSEO);
+    </script>
+</head>
+<body>
+    <article data-seo-content>
+        <h1>Voorbeeld Pagina</h1>
+        <p>De Europese Unie heeft vandaag de AI Act aangenomen. Deze wetgeving reguleert kunstmatige intelligentie in Europa.</p>
+    </article>
+    
+    <section>
+        <h2>Hoe het werkt:</h2>
+        <ol>
+            <li>Voeg <code>data-seo-content</code> toe aan je content element</li>
+            <li>Voeg <code>data-seo="..."</code> toe aan meta tags</li>
+            <li>Het script haalt automatisch SEO op</li>
+        </ol>
+    </section>
+</body>
+</html>

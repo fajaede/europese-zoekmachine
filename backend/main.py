@@ -1049,3 +1049,186 @@ async def get_dashboard():
     """Modern monitoring dashboard."""
     dashboard_path = os.path.join(os.path.dirname(__file__), "dashboard.html")
     return FileResponse(dashboard_path)
+
+
+# ============================================
+# SERVER-SIDE SEO RENDERING
+# ============================================
+
+@app.get("/seo/render")
+async def render_page_with_seo(
+    content: str,
+    url: str = None,
+    language: str = "nl",
+    template: str = "default"
+):
+    """
+    Genereert een complete HTML pagina met SEO metadata server-side.
+    Perfect voor statische pages met automatische SEO.
+    """
+    try:
+        # Genereer SEO data via OpenAI
+        from openai import AsyncOpenAI
+        client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+        
+        prompt = f"Genereer SEO metadata (taal: {language}). Content: {content[:1000]}. Return JSON: {{title, meta_description, keywords, score}}"
+        response = await client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": "SEO expert. Return ALLEEN JSON."},
+                {"role": "user", "content": prompt}
+            ],
+            response_format={"type": "json_object"}
+        )
+        
+        import json
+        seo_data = json.loads(response.choices[0].message.content)
+        
+        # Kies template
+        if template == "default":
+            html = generate_default_template(seo_data, content, url)
+        elif template == "minimal":
+            html = generate_minimal_template(seo_data, content)
+        else:
+            html = generate_default_template(seo_data, content, url)
+        
+        return HTMLResponse(content=html, status_code=200)
+        
+    except Exception as e:
+        print(f"SEO render fout: {e}")
+        # Fallback naar simpele template
+        words = content.split()[:10]
+        title = " ".join(words)
+        html = f"""<!DOCTYPE html>
+<html lang="{language}">
+<head>
+    <meta charset="UTF-8">
+    <title>{title}</title>
+    <meta name="description" content="{content[:160]}">
+</head>
+<body>
+    <article>{content}</article>
+</body>
+</html>"""
+        return HTMLResponse(content=html, status_code=200)
+
+
+def generate_default_template(seo_data: dict, content: str, url: str = None):
+    """Genereert een complete HTML pagina met SEO metadata."""
+    title = seo_data.get("title", "Pagina")[:60]
+    description = seo_data.get("meta_description", "")[:160]
+    keywords = ", ".join(seo_data.get("keywords", []))
+    score = seo_data.get("score", 0)
+    
+    url = url or "https://api.fajaede.eu"
+    
+    return f"""<!DOCTYPE html>
+<html lang="nl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    
+    <!-- SEO Metadata -->
+    <title>{title}</title>
+    <meta name="description" content="{description}">
+    <meta name="keywords" content="{keywords}">
+    <meta name="robots" content="index, follow">
+    
+    <!-- Open Graph / Social Media -->
+    <meta property="og:title" content="{title}">
+    <meta property="og:description" content="{description}">
+    <meta property="og:type" content="website">
+    <meta property="og:url" content="{url}">
+    <meta property="og:site_name" content="Europese Zoekmachine">
+    
+    <!-- Twitter Card -->
+    <meta name="twitter:card" content="summary">
+    <meta name="twitter:title" content="{title}">
+    <meta name="twitter:description" content="{description}">
+    
+    <!-- Canonical URL -->
+    <link rel="canonical" href="{url}">
+    
+    <style>
+        body {{
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 40px 20px;
+            line-height: 1.6;
+            color: #333;
+        }}
+        header {{
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 40px;
+            border-radius: 12px;
+            margin-bottom: 40px;
+            text-align: center;
+        }}
+        header h1 {{
+            margin: 0;
+            font-size: 2.5em;
+        }}
+        article {{
+            background: #f8f9fa;
+            padding: 30px;
+            border-radius: 8px;
+            border-left: 4px solid #667eea;
+        }}
+        .seo-badge {{
+            display: inline-block;
+            background: #4caf50;
+            color: white;
+            padding: 6px 12px;
+            border-radius: 20px;
+            font-size: 12px;
+            margin-top: 10px;
+        }}
+        footer {{
+            margin-top: 60px;
+            padding-top: 20px;
+            border-top: 2px solid #e0e0e0;
+            text-align: center;
+            color: #666;
+            font-size: 14px;
+        }}
+    </style>
+</head>
+<body>
+    <header>
+        <h1>{title}</h1>
+        <span class="seo-badge">✅ SEO Score: {score}/100</span>
+    </header>
+    
+    <article>
+        {content}
+    </article>
+    
+    <footer>
+        <p>Gegenereerd met Europese Zoekmachine API</p>
+        <p>SEO Score: {score}/100 | Keywords: {keywords}</p>
+    </footer>
+</body>
+</html>"""
+
+
+def generate_minimal_template(seo_data: dict, content: str):
+    """Genereert een minimale HTML pagina."""
+    title = seo_data.get("title", "Pagina")[:60]
+    description = seo_data.get("meta_description", "")[:160]
+    
+    return f"""<!DOCTYPE html>
+<html lang="nl">
+<head>
+    <meta charset="UTF-8">
+    <title>{title}</title>
+    <meta name="description" content="{description}">
+</head>
+<body>
+    <article>
+        <h1>{title}</h1>
+        {content}
+    </article>
+</body>
+</html>"""
