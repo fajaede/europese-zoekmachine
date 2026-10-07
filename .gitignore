@@ -87,3 +87,7 @@ Thumbs.db
 *.before-*
 *.pre-*
 *.working-*
+
+# Lokale databases (bevatten e-mailadressen en API keys)
+*.db
+*.sqlite3

@@ -1,11 +1,12 @@
-import sys
-sys.path.insert(0, "/root/europese-zoekmachine")
-
-from api.developer_api import router as developer_router
 """Backend API for the Europese Zoekmachine."""
 
 # Standard library imports
 import os
+import sys
+import html
+import ipaddress
+import secrets
+import socket
 import json
 import asyncio
 import io
@@ -25,26 +26,57 @@ from bs4 import BeautifulSoup
 from fastapi import (
     Depends,
     FastAPI,
+    Header,
     Request,
     HTTPException,
     BackgroundTasks,
-
 )
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import RedirectResponse, HTMLResponse
+from fastapi.responses import RedirectResponse, HTMLResponse, FileResponse
 from meilisearch_python_async import (
     Client as AsyncMeiliClient,
     errors as meili_errors,
 )
 from pydantic import BaseModel
 from dotenv import load_dotenv
-from monitoring import router as monitoring_router
 
 # Local application imports
+# Maak de repository-root importeerbaar zodat 'api' gevonden wordt, ook buiten Docker.
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+from api.developer_api import router as developer_router  # noqa: E402
+from monitoring import router as monitoring_router  # noqa: E402
 
 # Laad environment variables uit het .env bestand in de root directory
 load_dotenv()
 
+MAX_SEARCH_LIMIT = 100
+
+
+def require_admin(x_admin_key: str = Header(None, alias="X-Admin-Key")):
+    """Beveiligt beheer-endpoints met de ADMIN_API_KEY uit de environment."""
+    admin_key = os.getenv("ADMIN_API_KEY")
+    if not admin_key:
+        raise HTTPException(
+            status_code=503, detail="Beheer-endpoints zijn uitgeschakeld (ADMIN_API_KEY ontbreekt)."
+        )
+    if not x_admin_key or not secrets.compare_digest(x_admin_key, admin_key):
+        raise HTTPException(status_code=401, detail="Ongeldige of ontbrekende admin key.")
+
+
+async def validate_public_url(url: str) -> str:
+    """Controleert dat een URL http(s) is en niet naar een intern netwerkadres wijst (SSRF)."""
+    parsed = urlparse(url.strip())
+    if parsed.scheme not in ("http", "https") or not parsed.hostname:
+        raise HTTPException(status_code=400, detail="Alleen geldige http(s)-URL's zijn toegestaan.")
+    try:
+        infos = await asyncio.get_running_loop().getaddrinfo(parsed.hostname, None)
+    except socket.gaierror as e:
+        raise HTTPException(status_code=400, detail="Domein kon niet worden gevonden.") from e
+    for info in infos:
+        ip = ipaddress.ip_address(info[4][0])
+        if not ip.is_global:
+            raise HTTPException(status_code=400, detail="Interne netwerkadressen zijn niet toegestaan.")
+    return url.strip()
 
 
 def calculate_seo_score(html_content: str, url: str) -> int:
@@ -266,7 +298,7 @@ async def search(request: Request, q: str, limit: int = 10, category: str = None
         return {"results": []}
 
     is_sitemap_request = request.headers.get("X-Sitemap-Request") == "true"
-    search_limit = 1000 if is_sitemap_request else limit
+    search_limit = 1000 if is_sitemap_request else max(1, min(limit, MAX_SEARCH_LIMIT))
 
     search_params = {"limit": search_limit}
     if is_sitemap_request:
@@ -277,7 +309,7 @@ async def search(request: Request, q: str, limit: int = 10, category: str = None
     try:
         if category:
             # Escape single quotes in category value to prevent MeiliSearch errors.
-            safe_category = category.replace("'", "\\'")
+            safe_category = category.replace("\\", "\\\\").replace("'", "\\'")
             search_params["filter"] = [f"category = '{safe_category}'"]
             search_results = await meili_index.search(
                 q, **search_params
@@ -616,7 +648,6 @@ class Crawler:  # pylint: disable=too-few-public-methods
                         print(f"Geïndexeerd: {url}")
                     except Exception as e:
                         print(f"MEILI ERROR bij indexeren {url}: {e}")
-                        import traceback
                         traceback.print_exc()
 
             # Voeg nieuwe links toe aan de wachtrij, tenzij 'nofollow' is ingesteld.
@@ -729,8 +760,10 @@ async def start_crawl(
             detail="Kan niet crawlen: MeiliSearch is niet beschikbaar.",
         )
 
+    crawl_url = await validate_public_url(crawl_request.url)
+
     # Voeg URL toe aan de wachtrij
-    await request.app.state.redis_client.lpush("crawler:queue", crawl_request.url)
+    await request.app.state.redis_client.lpush("crawler:queue", crawl_url)
     queue_size = await request.app.state.redis_client.llen("crawler:queue")
     
     # Start crawler als er nog geen actief is
@@ -738,9 +771,9 @@ async def start_crawl(
         crawler = Crawler(
             request.app.state.meili_index, request.app.state.redis_client
         )
-        background_tasks.add_task(crawler.run, crawl_request.url)
+        background_tasks.add_task(crawler.run, crawl_url)
         return {
-            "message": f"Crawl-taak voor {crawl_request.url} is gestart.",
+            "message": f"Crawl-taak voor {crawl_url} is gestart.",
             "queue_size": queue_size,
             "status": "started"
         }
@@ -751,7 +784,7 @@ async def start_crawl(
             "status": "queued"
         }
 
-@app.post("/api/crawl/stop")
+@app.post("/api/crawl/stop", dependencies=[Depends(require_admin)])
 async def stop_crawl(request: Request):
     """Stelt een vlag in Redis in om de actieve crawler netjes te stoppen."""
     redis_client = request.app.state.redis_client
@@ -767,7 +800,7 @@ async def stop_crawl(request: Request):
     }
 
 
-@app.post("/api/crawl/reset")
+@app.post("/api/crawl/reset", dependencies=[Depends(require_admin)])
 async def reset_crawl(request: Request):
     """Stopt de crawler en wist de wachtrij, bezochte URLs en de MeiliSearch-index."""
     redis_client = request.app.state.redis_client
@@ -913,8 +946,9 @@ async def benchmark_seo_geo(url: str = None):
     """Test SEO + geo scoring met echte URL of voorbeelden"""
     
     if url:
+        url = await validate_public_url(url)
         try:
-            async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
+            async with httpx.AsyncClient(timeout=10.0, follow_redirects=False) as client:
                 response = await client.get(url)
                 response.raise_for_status()
                 html = response.text
@@ -934,7 +968,7 @@ async def benchmark_seo_geo(url: str = None):
                         "geo_keywords": 10
                     }
                 }
-        except Exception as e:
+        except httpx.HTTPError as e:
             return {"error": str(e), "url": url}
     else:
         test_cases = [
@@ -1014,7 +1048,7 @@ async def _call_llm(
             chat_completion = await (
                 client.chat.completions.create(
                     messages=messages,
-                    model="gpt-3.5-turbo",
+                    model="gpt-4o-mini",
                     temperature=0.3,
                 )
             )
@@ -1041,9 +1075,6 @@ async def _call_llm(
         ) from e
 
 # Serve dashboard
-from fastapi.responses import HTMLResponse, FileResponse
-import os
-
 @app.get("/dashboard", response_class=HTMLResponse)
 async def get_dashboard():
     """Modern monitoring dashboard."""
@@ -1068,9 +1099,8 @@ async def render_page_with_seo(
     """
     try:
         # Genereer SEO data via OpenAI
-        from openai import AsyncOpenAI
-        client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-        
+        client = openai.AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
         prompt = f"Genereer SEO metadata (taal: {language}). Content: {content[:1000]}. Return JSON: {{title, meta_description, keywords, score}}"
         response = await client.chat.completions.create(
             model="gpt-4o-mini",
@@ -1081,46 +1111,47 @@ async def render_page_with_seo(
             response_format={"type": "json_object"}
         )
         
-        import json
         seo_data = json.loads(response.choices[0].message.content)
         
         # Kies template
-        if template == "default":
-            html = generate_default_template(seo_data, content, url)
-        elif template == "minimal":
-            html = generate_minimal_template(seo_data, content)
+        if template == "minimal":
+            page = generate_minimal_template(seo_data, content)
         else:
-            html = generate_default_template(seo_data, content, url)
-        
-        return HTMLResponse(content=html, status_code=200)
+            page = generate_default_template(seo_data, content, url)
+
+        return HTMLResponse(content=page, status_code=200)
         
     except Exception as e:
         print(f"SEO render fout: {e}")
         # Fallback naar simpele template
         words = content.split()[:10]
-        title = " ".join(words)
-        html = f"""<!DOCTYPE html>
-<html lang="{language}">
+        title = html.escape(" ".join(words))
+        page = f"""<!DOCTYPE html>
+<html lang="{html.escape(language)}">
 <head>
     <meta charset="UTF-8">
     <title>{title}</title>
-    <meta name="description" content="{content[:160]}">
+    <meta name="description" content="{html.escape(content[:160])}">
 </head>
 <body>
-    <article>{content}</article>
+    <article>{html.escape(content)}</article>
 </body>
 </html>"""
-        return HTMLResponse(content=html, status_code=200)
+        return HTMLResponse(content=page, status_code=200)
 
 
 def generate_default_template(seo_data: dict, content: str, url: str = None):
     """Genereert een complete HTML pagina met SEO metadata."""
-    title = seo_data.get("title", "Pagina")[:60]
-    description = seo_data.get("meta_description", "")[:160]
-    keywords = ", ".join(seo_data.get("keywords", []))
-    score = seo_data.get("score", 0)
-    
-    url = url or "https://api.fajaede.eu"
+    title = html.escape(str(seo_data.get("title", "Pagina"))[:60])
+    description = html.escape(str(seo_data.get("meta_description", ""))[:160])
+    keywords_raw = seo_data.get("keywords", [])
+    if isinstance(keywords_raw, str):
+        keywords_raw = [keywords_raw]
+    keywords = html.escape(", ".join(str(k) for k in keywords_raw))
+    score = html.escape(str(seo_data.get("score", 0)))
+    content = html.escape(content)
+
+    url = html.escape(url or "https://api.fajaede.eu")
     
     return f"""<!DOCTYPE html>
 <html lang="nl">
@@ -1215,9 +1246,10 @@ def generate_default_template(seo_data: dict, content: str, url: str = None):
 
 def generate_minimal_template(seo_data: dict, content: str):
     """Genereert een minimale HTML pagina."""
-    title = seo_data.get("title", "Pagina")[:60]
-    description = seo_data.get("meta_description", "")[:160]
-    
+    title = html.escape(str(seo_data.get("title", "Pagina"))[:60])
+    description = html.escape(str(seo_data.get("meta_description", ""))[:160])
+    content = html.escape(content)
+
     return f"""<!DOCTYPE html>
 <html lang="nl">
 <head>

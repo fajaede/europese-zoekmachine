@@ -307,6 +307,9 @@
     <div class="toast" id="toast"></div>
     
     <script>
+        function escapeHtml(value) {
+            return String(value).replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
+        }
         const API_BASE = window.location.origin + '/api/developers';
         
         const INTEGRATION_SCRIPT = `(function() {
@@ -421,7 +424,7 @@
                 const data = await response.json();
                 
                 if (response.ok) {
-                    resultDiv.innerHTML = '<div class="result-box success"><strong>✅ SEO Gegenereerd (Score: ' + data.score + '/100)</strong><p style="margin-top:16px;"><strong>Title:</strong><br>' + data.title + '</p><p style="margin-top:12px;"><strong>Meta Description:</strong><br>' + data.meta_description + '</p><p style="margin-top:12px;"><strong>Keywords:</strong><br>' + data.keywords.join(', ') + '</p></div>';
+                    resultDiv.innerHTML = '<div class="result-box success"><strong>✅ SEO Gegenereerd (Score: ' + escapeHtml(data.score) + '/100)</strong><p style="margin-top:16px;"><strong>Title:</strong><br>' + escapeHtml(data.title) + '</p><p style="margin-top:12px;"><strong>Meta Description:</strong><br>' + escapeHtml(data.meta_description) + '</p><p style="margin-top:12px;"><strong>Keywords:</strong><br>' + escapeHtml(data.keywords.join(', ')) + '</p></div>';
                 } else {
                     resultDiv.innerHTML = '<div class="result-box error">❌ ' + (data.detail || data.message || 'Fout') + '</div>';
                 }

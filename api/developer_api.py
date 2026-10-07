@@ -110,7 +110,8 @@ async def register_developer(request: RegisterRequest):
     existing = cursor.fetchone()
     if existing:
         conn.close()
-        return RegisterResponse(api_key=existing[0], email=request.email, project_name=None, daily_limit=100, message="Email al geregistreerd.")
+        # Geef nooit een bestaande key terug: anders kan iedereen met alleen een e-mailadres die key opvragen.
+        raise HTTPException(status_code=409, detail="Dit e-mailadres is al geregistreerd. Gebruik je bestaande API key.")
     api_key = generate_api_key()
     cursor.execute("INSERT INTO api_keys (email, api_key, project_name) VALUES (?, ?, ?)", (request.email, api_key, request.project_name))
     conn.commit()

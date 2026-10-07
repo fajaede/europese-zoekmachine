@@ -128,3 +128,15 @@ pages: {
 }
 ```
 
+
+---
+
+## 🔒 Beheer-endpoints
+
+`POST /api/crawl/stop` en `POST /api/crawl/reset` vereisen een admin key. Zet in `.env`:
+
+```
+ADMIN_API_KEY=<lange willekeurige string>
+```
+
+en stuur die mee als header `X-Admin-Key`. Zonder `ADMIN_API_KEY` zijn deze endpoints uitgeschakeld.
