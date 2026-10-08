@@ -87,3 +87,5 @@ Thumbs.db
 *.before-*
 *.pre-*
 *.working-*
+
+backend/developer_keys.db
