@@ -82,10 +82,38 @@ export default function PrivacyPolicy() {
         4. Delen van gegevens met derden
       </h2>
       <p>
-        Voor het genereren van de &quot;Fajaede Intelligence Layer&quot; samenvattingen,
-        wordt uw zoekopdracht (zonder persoonlijke identificatie) doorgegeven
-        aan onze AI-serviceprovider (Ollama, lokaal draaiend). Wij delen verder
-        geen persoonlijke gegevens met derden, tenzij wettelijk verplicht.
+        Wanneer u de AI-samenvattingsfunctie gebruikt, verwerken wij uw vraag,
+        relevante zoekresultaten uit onze zoekindex en, indien aanwezig, uw
+        conversatiegeschiedenis om een antwoord te genereren. Deze gegevens
+        worden eerst naar de OpenAI API verzonden. Als de OpenAI-aanroep mislukt,
+        kan onze backend dezelfde prompt en conversatiegeschiedenis via een
+        Ollama-model op onze infrastructuur verwerken. Voor de AI-ondersteunde
+        SEO-functie kunnen maximaal 1.000 tekens van de door u aangeleverde
+        content naar OpenAI worden verzonden om SEO-metadata te genereren.
+        <br /><br />
+        Uw invoer kan persoonsgegevens bevatten. Deel geen gevoelige
+        persoonsgegevens in uw vraag of aangeleverde content, tenzij dit
+        noodzakelijk is. Wij passen in deze functies momenteel geen automatische
+        anonimisering toe voordat gegevens naar de AI-dienst worden verzonden.
+        <br /><br />
+        OpenAI vermeldt dat API-inputs en -outputs standaard niet worden gebruikt
+        om modellen te trainen, tenzij de klant daar expliciet voor kiest.
+        OpenAI kan API-inputs en -outputs voor bepaalde endpoints en functies
+        standaard tot 30 dagen bewaren voor misbruikmonitoring, behoudens
+        toepasselijke uitzonderingen. De instellingen en voorwaarden van ons
+        OpenAI-account bepalen welke bewaarbeperkingen gelden.
+        <br /><br />
+        Als de OpenAI API-aanroep mislukt, kan onze backend de vraag,
+        relevante zoekcontext en eventuele conversatiegeschiedenis als fallback
+        verwerken met Ollama. Ollama draait lokaal op onze eigen server via
+        localhost:11434 en gebruikt het lokaal geïnstalleerde model phi3:mini.
+        Deze fallback-aanvraag wordt niet naar Ollama Cloud gestuurd.
+        <br /><br />
+        Wij gebruiken deze aanbieders om de door u gevraagde AI-functies te
+        leveren en niet voor advertentiedoeleinden. Informatie over de
+        verwerkingsdoeleinden, rechtsgrond, ontvangers, bewaartermijnen en
+        eventuele internationale doorgiften moet overeenkomen met onze
+        daadwerkelijke instellingen en afspraken met deze dienstverleners.
       </p>
 
       <h2 style={{ fontSize: 24, marginTop: 40, color: "#1e293b", borderBottom: '1px solid #e2e8f0', paddingBottom: '8px' }}>5. Uw rechten</h2>
