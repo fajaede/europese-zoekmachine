@@ -111,6 +111,7 @@ async def lifespan(fastapi_app: FastAPI):
         fastapi_app.state.redis_client = None
     else:
         try:
+            redis_username = os.getenv("REDIS_USERNAME", "default")
             fastapi_app.state.redis_client = redis.Redis(
                 host=redis_host,
                 port=redis_port,

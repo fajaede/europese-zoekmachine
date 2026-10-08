@@ -9,6 +9,8 @@ ENV PYTHONUNBUFFERED 1
 # Stel de werkdirectory in voor de applicatiecode
 WORKDIR /app/backend
 
+ENV PYTHONPATH=/app
+
 # Kopieer de dependency-bestanden
 COPY backend/requirements.txt .
 

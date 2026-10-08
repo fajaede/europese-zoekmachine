@@ -10,3 +10,4 @@ gunicorn==26.0.0
 python-dotenv==1.2.2
 pypdf==6.14.2
 pyyaml
+email-validator
