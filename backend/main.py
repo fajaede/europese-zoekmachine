@@ -6,6 +6,7 @@ from api.developer_api import router as developer_router
 
 # Standard library imports
 import os
+import hmac
 import json
 import asyncio
 import io
@@ -31,7 +32,7 @@ from fastapi import (
 
 )
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import RedirectResponse, HTMLResponse
+from fastapi.responses import RedirectResponse, HTMLResponse, FileResponse
 from meilisearch_python_async import (
     Client as AsyncMeiliClient,
     errors as meili_errors,
@@ -752,9 +753,27 @@ async def start_crawl(
             "status": "queued"
         }
 
+def require_admin_key(request: Request) -> None:
+    expected_key = os.getenv("ADMIN_API_KEY")
+    provided_key = request.headers.get("X-Admin-Key")
+
+    if not expected_key or not provided_key:
+        raise HTTPException(
+            status_code=401,
+            detail="Admin authentication required",
+        )
+
+    if not hmac.compare_digest(provided_key, expected_key):
+        raise HTTPException(
+            status_code=403,
+            detail="Invalid admin key",
+        )
+
+
 @app.post("/api/crawl/stop")
 async def stop_crawl(request: Request):
     """Stelt een vlag in Redis in om de actieve crawler netjes te stoppen."""
+    require_admin_key(request)
     redis_client = request.app.state.redis_client
     if not redis_client:
         raise HTTPException(status_code=503, detail="Redis is niet beschikbaar.")
@@ -771,6 +790,7 @@ async def stop_crawl(request: Request):
 @app.post("/api/crawl/reset")
 async def reset_crawl(request: Request):
     """Stopt de crawler en wist de wachtrij, bezochte URLs en de MeiliSearch-index."""
+    require_admin_key(request)
     redis_client = request.app.state.redis_client
     meili_index = request.app.state.meili_index
 
@@ -1042,8 +1062,6 @@ async def _call_llm(
         ) from e
 
 # Serve dashboard
-from fastapi.responses import HTMLResponse, FileResponse
-import os
 
 @app.get("/dashboard", response_class=HTMLResponse)
 async def get_dashboard():
