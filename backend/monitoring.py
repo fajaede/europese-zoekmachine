@@ -43,7 +43,11 @@ async def health_check(request: Request):
         is_running = await redis_client.get("crawler:is_running")
         services["crawler"] = "active" if is_running else "idle"
     
-    all_ok = all(v in ["ok", "active"] for v in services.values())
+    critical_services = ("backend", "redis", "meilisearch")
+    all_ok = all(
+        services.get(name) in ("ok", "active")
+        for name in critical_services
+    )
     
     return {
         "status": "healthy" if all_ok else "degraded",
