@@ -109,11 +109,33 @@ export default function PrivacyPolicy() {
         localhost:11434 en gebruikt het lokaal geïnstalleerde model phi3:mini.
         Deze fallback-aanvraag wordt niet naar Ollama Cloud gestuurd.
         <br /><br />
-        Wij gebruiken deze aanbieders om de door u gevraagde AI-functies te
-        leveren en niet voor advertentiedoeleinden. Informatie over de
-        verwerkingsdoeleinden, rechtsgrond, ontvangers, bewaartermijnen en
-        eventuele internationale doorgiften moet overeenkomen met onze
-        daadwerkelijke instellingen en afspraken met deze dienstverleners.
+        Wij verwerken deze gegevens uitsluitend om de door u gevraagde
+        AI-samenvattingen en SEO-metadata te leveren. De rechtsgrond voor deze
+        verwerking is de uitvoering van de overeenkomst met u, voor zover de
+        verwerking noodzakelijk is om deze dienst te leveren.
+        <br /><br />
+        Voor AI-samenvattingen ontvangen OpenAI en, alleen wanneer de
+        OpenAI-aanroep mislukt, onze lokaal draaiende Ollama-service de gegevens
+        die nodig zijn om de aanvraag te verwerken. Voor de SEO-functie ontvangt
+        OpenAI maximaal 1.000 tekens van de aangeleverde content. OpenAI
+        gebruikt API-inputs en -outputs standaard niet om modellen te trainen,
+        tenzij de klant expliciet kiest voor gegevensdeling. Voor API-gebruik
+        kunnen abuse-monitoringlogs met prompts en antwoorden standaard tot
+        30 dagen worden bewaard, behoudens toepasselijke uitzonderingen en
+        accountinstellingen.
+        <br /><br />
+        OpenAI treedt voor klantgegevens op als verwerker onder zijn Data
+        Processing Addendum. Voor doorgiften van EER-gegevens buiten de EER
+        voorziet dat addendum in passende waarborgen, waaronder toepasselijke
+        standaardcontractbepalingen of een adequaatheidsbesluit. Onze
+        OpenAI-verzoeken worden niet uitsluitend binnen de EER verwerkt, tenzij
+        een regionale verwerkingsconfiguratie daadwerkelijk is ingeschakeld.
+        <br /><br />
+        De Ollama-fallback wordt op onze eigen server verwerkt met het lokale
+        model phi3:mini; deze fallback-aanvraag wordt niet naar Ollama Cloud
+        gestuurd. Wij bewaren prompts en antwoorden op onze server niet langer
+        dan noodzakelijk is voor de levering van de dienst en voor de
+        beveiliging, foutopsporing en wettelijke verplichtingen van Fajaede.
       </p>
 
       <h2 style={{ fontSize: 24, marginTop: 40, color: "#1e293b", borderBottom: '1px solid #e2e8f0', paddingBottom: '8px' }}>5. Uw rechten</h2>
