@@ -345,39 +345,33 @@ class Crawler:  # pylint: disable=too-few-public-methods
             raise ValueError("Redis client is niet beschikbaar voor de crawler.")
         self.redis = redis_client
         self.meili_index = meili_index
-        # Gebruik een standaard browser User-Agent om 403 Forbidden-fouten te voorkomen.
-        # Veel websites blokkeren onbekende of custom bot User-Agents.
-        # De volgorde van headers kan ook van belang zijn voor botdetectie.
-        user_agent = (
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/120.0.0.0 Safari/537.36"
-        )
+        user_agent = "FajaedeBot/1.0 (+https://www.fajaede.nl/)"
+
         headers = {
             "User-Agent": user_agent,
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,"
-                      "image/avif,image/webp,image/apng,*/*;q=0.8,"
-                      "application/signed-exchange;v=b3;q=0.7",
-            "Accept-Language": "nl-BE,nl;q=0.9,en-US;q=0.8,en;q=0.7",
-            "Accept-Encoding": "gzip, deflate",  # Verwijder br en zstd voor compatibiliteit
-            "DNT": "1",
-            "Upgrade-Insecure-Requests": "1",
-            "Sec-Fetch-Dest": "document",
-            "Sec-Fetch-Mode": "navigate",
-            "Sec-Fetch-Site": "none",
-            "Sec-Fetch-User": "?1",
-            "Cache-Control": "no-cache",
-            "Pragma": "no-cache",
+            "Accept": (
+                "text/html,application/xhtml+xml,application/xml;"
+                "q=0.9,*/*;q=0.8"
+            ),
+            "Accept-Language": "nl-NL,nl;q=0.9,en;q=0.8",
+            "Accept-Encoding": "gzip, deflate",
         }
+
         self.client = httpx.AsyncClient(
             headers=headers,
             follow_redirects=True,
-            timeout=10,
-            http2=False,  # Forceer HTTP/1.1 om 400 errors te voorkomen
+            timeout=30.0,
+            http2=False,
         )
         self.content_hashes = set()
         self.robot_parsers = {}
-        self.junk_url_patterns = ["/login", "/register", "?replytocom="]
+        self.junk_url_patterns = [
+            "/login",
+            "/register",
+            "/wp-login.php",
+            "/wp-admin/",
+            "?replytocom=",
+        ]
         self.start_domain = ""  # Wordt ingesteld in de run() methode
 
     async def _get_robot_parser(self, url: str) -> RobotFileParser:
@@ -452,6 +446,7 @@ class Crawler:  # pylint: disable=too-few-public-methods
                 return
 
             await self.meili_index.add_documents([document])
+            await self.redis.sadd("crawler:indexed_urls", url)
             print(f"PDF Geïndexeerd: {url}")
         except (pypdf_errors.PdfReadError, IOError, ValueError, TypeError) as e:
             print(f"Fout bij het lezen of parsen van PDF {url}.")
@@ -478,59 +473,50 @@ class Crawler:  # pylint: disable=too-few-public-methods
             await self.redis.sadd("crawler:visited_urls", url)
 
             # Regel: Beleefdheidsvertraging
-            await asyncio.sleep(15) # Verhoogd om 429 Too Many Requests te verminderen
+            await asyncio.sleep(15)  # Verhoogd om 429 Too Many Requests te verminderen
 
-            # HEAD request proberen, fallback naar GET als het faalt
-            content_type = ""
-            content_length = 0
+            print(f"GET request voor pagina: {url}")
+
             try:
-                head_res = await self.client.head(url, timeout=10, follow_redirects=True)
-                if head_res.status_code == 200:
-                    content_type = head_res.headers.get("Content-Type", "")
-                    content_length = int(head_res.headers.get("Content-Length", 0))
-                else:
-                    print(f"HEAD request faalde met status {head_res.status_code} voor {url}, ga door met GET")
-            except Exception as e:
-                print(f"HEAD request error voor {url}: {e}, ga door met GET")
-            
-            # Als content_type leeg is, ga uit van HTML voor nu
-            if not content_type:
-                content_type = "text/html"
-                print(f"Geen content-type gevonden, ga uit van HTML voor {url}")
-
-            # Bepaal het pad op basis van content type
-            if "application/pdf" in content_type:
-                # 5MB limiet voor PDF's
-                if content_length > 5 * 1024 * 1024: # 5MB limiet
-                    print(
-                        f"Overgeslagen (PDF te groot: "
-                        f"{content_length / 1024 / 1024:.2f}MB): {url}"
-                    )
-                    return
-                # Langere timeout voor PDF's
-                print(f"DEBUG: GET request voor PDF: {url}")
                 res = await self.client.get(url, timeout=30)
-                print(f"DEBUG: GET response status: {res.status_code}")
+                print(
+                    f"GET response: status={res.status_code}, "
+                    f"url={url}"
+                )
                 res.raise_for_status()
-                await self._process_pdf(url, res.content)
-                return # Stop verdere verwerking voor PDF's
-            elif "text/html" not in content_type:
-                print(f"Overgeslagen (geen HTML of PDF): {url}")
+            except httpx.HTTPStatusError as e:
+                print(
+                    f"GET mislukt: status={e.response.status_code}, "
+                    f"url={url}"
+                )
+                return
+            except httpx.RequestError as e:
+                print(f"GET request error voor {url}: {e}")
                 return
 
-            # Download de daadwerkelijke pagina
-            print(f"DEBUG: Start GET request voor HTML: {url}")
-            try:
-                res = await self.client.get(url, timeout=10)
-                print(f"DEBUG: GET response status: {res.status_code}")
-                print(f"DEBUG: GET response headers: {dict(res.headers)}")
-                res.raise_for_status()
-                print(f"DEBUG: GET succesvol, content length: {len(res.content)}")
-            except httpx.HTTPStatusError as e:
-                print(f"DEBUG: HTTP error bij GET: {e.response.status_code}")
-                print(f"DEBUG: Response headers: {dict(e.response.headers)}")
-                print(f"DEBUG: Response body (first 500): {e.response.text[:500]}")
-                raise
+            content_type = (
+                res.headers.get("Content-Type", "")
+                .split(";", 1)[0]
+                .strip()
+                .lower()
+            )
+
+            if content_type == "application/pdf":
+                if len(res.content) > 5 * 1024 * 1024:
+                    print(f"Overgeslagen: PDF groter dan 5 MB: {url}")
+                    return
+
+                await self._process_pdf(url, res.content)
+                return
+
+            if content_type not in ("text/html", "application/xhtml+xml"):
+                print(
+                    f"Overgeslagen: unsupported content-type "
+                    f"{content_type or 'onbekend'}: {url}"
+                )
+                return
+
+            print(f"HTML succesvol opgehaald: {len(res.content)} bytes")
 
             soup = BeautifulSoup(res.content, "html.parser")
 
@@ -578,10 +564,62 @@ class Crawler:  # pylint: disable=too-few-public-methods
             if should_index:
                 # Extraheer titel en content
                 title = soup.title.string if soup.title else "Ongetiteld"
-                # Verwijder script en style tags voor schonere content
-                for script_or_style in soup(["script", "style"]):
-                    script_or_style.decompose()
-                content = soup.get_text(separator="\n", strip=True)
+                content_soup = BeautifulSoup(
+                    str(soup),
+                    "html.parser",
+                )
+
+                for element in content_soup.select(
+                    "script, style, noscript, nav, header, footer, aside, "
+                    "form, .cookie, .cookie-banner, .complianz, "
+                    "#cookie-law-info-bar, #comments, .comments-area, "
+                    ".comment-respond, .comment-list, .related-posts, "
+                    ".related, .post-navigation, .site-header, "
+                    ".site-footer, .site-navigation, .main-navigation, "
+                    ".elementor-location-header, .elementor-location-footer, "
+                    ".elementor-nav-menu, .wp-block-navigation"
+                ):
+                    element.decompose()
+
+                content_candidates = [
+                    content_soup.select_one(".entry-content"),
+                    content_soup.select_one(".post-content"),
+                    content_soup.select_one(".wp-block-post-content"),
+                    content_soup.select_one(
+                        ".elementor-widget-theme-post-content"
+                    ),
+                    content_soup.select_one(".elementor-location-single"),
+                    content_soup.select_one(".site-main article"),
+                    content_soup.find("article"),
+                    content_soup.find("main"),
+                    content_soup.body,
+                ]
+
+                content = ""
+                for content_root in content_candidates:
+                    if not content_root:
+                        continue
+
+                    candidate = content_root.get_text(
+                        separator="\n",
+                        strip=True,
+                    )
+                    if len(candidate.split()) >= 100:
+                        content = candidate
+                        break
+
+                if not content:
+                    content = next(
+                        (
+                            content_root.get_text(
+                                separator="\n",
+                                strip=True,
+                            )
+                            for content_root in content_candidates
+                            if content_root
+                        ),
+                        "",
+                    )
 
                 # Regel: Controleer op 'thin content'
                 if len(content.split()) < 100:
@@ -615,6 +653,7 @@ class Crawler:  # pylint: disable=too-few-public-methods
 
                     try:
                         await self.meili_index.add_documents([document])
+                        await self.redis.sadd("crawler:indexed_urls", url)
                         print(f"Geïndexeerd: {url}")
                     except Exception as e:
                         print(f"MEILI ERROR bij indexeren {url}: {e}")
@@ -719,39 +758,43 @@ async def start_crawl(
     background_tasks: BackgroundTasks,
 ):
     """Endpoint om een nieuwe crawl-taak te starten op de achtergrond."""
-    # Controleer of de benodigde services beschikbaar zijn.
-    if not request.app.state.redis_client:
+    redis_client = request.app.state.redis_client
+    meili_index = request.app.state.meili_index
+
+    if not redis_client:
         raise HTTPException(
             status_code=503,
             detail="Kan niet crawlen: Redis is niet beschikbaar.",
         )
-    if not request.app.state.meili_index:
+
+    if not meili_index:
         raise HTTPException(
             status_code=503,
             detail="Kan niet crawlen: MeiliSearch is niet beschikbaar.",
         )
 
-    # Voeg URL toe aan de wachtrij
-    await request.app.state.redis_client.lpush("crawler:queue", crawl_request.url)
-    queue_size = await request.app.state.redis_client.llen("crawler:queue")
-    
-    # Start crawler als er nog geen actief is
-    if not await request.app.state.redis_client.get("crawler:is_running"):
-        crawler = Crawler(
-            request.app.state.meili_index, request.app.state.redis_client
-        )
-        background_tasks.add_task(crawler.run, crawl_request.url)
+    if await redis_client.get("crawler:is_running"):
+        await redis_client.lpush("crawler:queue", crawl_request.url)
+        queue_size = await redis_client.llen("crawler:queue")
+
         return {
-            "message": f"Crawl-taak voor {crawl_request.url} is gestart.",
+            "message": (
+                f"URL toegevoegd aan wachtrij (positie {queue_size}). "
+                "Crawl is al bezig."
+            ),
             "queue_size": queue_size,
-            "status": "started"
+            "status": "queued",
         }
-    else:
-        return {
-            "message": f"URL toegevoegd aan wachtrij (positie {queue_size}). Crawl is al bezig.",
-            "queue_size": queue_size,
-            "status": "queued"
-        }
+
+    crawler = Crawler(meili_index, redis_client)
+    background_tasks.add_task(crawler.run, crawl_request.url)
+
+    return {
+        "message": f"Crawl-taak voor {crawl_request.url} is gestart.",
+        "queue_size": 1,
+        "status": "started",
+    }
+
 
 def require_admin_key(request: Request) -> None:
     expected_key = os.getenv("ADMIN_API_KEY")
@@ -789,29 +832,37 @@ async def stop_crawl(request: Request):
 
 @app.post("/api/crawl/reset")
 async def reset_crawl(request: Request):
-    """Stopt de crawler en wist de wachtrij, bezochte URLs en de MeiliSearch-index."""
+    """Stopt de crawler en wist de crawlstatus en zoekindex."""
     require_admin_key(request)
+
     redis_client = request.app.state.redis_client
     meili_index = request.app.state.meili_index
 
     if not redis_client or not meili_index:
         raise HTTPException(
-            status_code=503, detail="Redis of MeiliSearch is niet beschikbaar."
+            status_code=503,
+            detail="Redis of MeiliSearch is niet beschikbaar.",
         )
 
-    # 1. Stop de actieve crawler
     await redis_client.set("crawler:stop_flag", "1", ex=60)
-
-    # 2. Wacht even om de lock vrij te geven als de crawler actief was
     await asyncio.sleep(2)
 
-    # 3. Wis alle crawler-gerelateerde data in Redis
-    await redis_client.delete("crawler:queue", "crawler:visited_urls", "crawler:content_hashes")
+    await redis_client.delete(
+        "crawler:queue",
+        "crawler:visited_urls",
+        "crawler:content_hashes",
+        "crawler:indexed_urls",
+    )
 
-    # 4. Wis alle documenten in de MeiliSearch-index
     await meili_index.delete_all_documents()
+    await redis_client.delete("crawler:stop_flag")
 
-    return {"message": "Crawler is gereset: wachtrij en zoekindex zijn leeggemaakt."}
+    return {
+        "message": (
+            "Crawler is gereset: wachtrij en zoekindex "
+            "zijn leeggemaakt."
+        )
+    }
 
 
 @app.get("/api/crawl/status")
@@ -827,13 +878,13 @@ async def get_crawl_status(request: Request):
     is_running = await redis_client.get("crawler:is_running") == "1"
     pages_in_queue = await redis_client.llen("crawler:queue")
     pages_visited = await redis_client.scard("crawler:visited_urls")
-    content_hashes = await redis_client.scard("crawler:content_hashes")
+    indexed_pages = await redis_client.scard("crawler:indexed_urls")
 
     return {
         "status": "actief" if is_running else "inactief",
         "pages_in_queue": pages_in_queue,
         "pages_visited": pages_visited,
-        "unique_pages_indexed": content_hashes,
+        "unique_pages_indexed": indexed_pages,
     }
 
 
