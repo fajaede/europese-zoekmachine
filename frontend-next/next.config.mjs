@@ -18,10 +18,11 @@ const nextConfig = {
     ],
   },
 
-  outputFileTracingRoot: __dirname,
-
-  turbopack: {
-    root: __dirname,
+  experimental: {
+    outputFileTracingRoot: path.join(__dirname, '../../'),
+    turbopack: {
+      root: path.join(__dirname, '../../'),
+    },
   },
 
   async rewrites() {
