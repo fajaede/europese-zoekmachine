@@ -79,6 +79,25 @@ GET /developers
 
 Toont een mooie HTML pagina met documentatie, voorbeelden en quick start guide.
 
+### 5. SEO- en lokale GEO-audit
+```bash
+GET /api/benchmark/seo-geo?url=https%3A%2F%2Fvoorbeeld.nl
+```
+
+De endpoint haalt de publieke HTML-pagina op en retourneert aparte scores van 0-100:
+`seo_score` voor on-page SEO en `geo_score` voor lokale vindbaarheid. `seo_geo_score`
+blijft beschikbaar als het gemiddelde van beide scores voor bestaande clients.
+
+`scoring_breakdown.seo` en `scoring_breakdown.geo` bevatten per controle de status,
+behaalde punten, maximum en uitleg. `issues` bevat de mislukte controles en
+`coverage` vermeldt welk deel van de controles daadwerkelijk kon worden uitgevoerd.
+Als `url` wordt weggelaten, retourneert de endpoint voorbeeldresultaten.
+
+Dit is een on-page audit van één URL. De score controleert geen Google Business
+Profile, externe bedrijfsvermeldingen, zoekresultaten of echte Core Web Vitals.
+De endpoint weigert privé-/lokale IP-adressen, niet-standaard poorten en redirects
+naar niet-publieke adressen.
+
 ## Installatie
 
 De Developer API is al geïnstalleerd! Files:

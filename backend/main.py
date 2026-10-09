@@ -11,11 +11,13 @@ import json
 import asyncio
 import io
 import hashlib
+import time
 from contextlib import asynccontextmanager
 import traceback
-from urllib.parse import urljoin, urlparse, urlunparse
+from urllib.parse import urljoin, urlparse, urlsplit, urlunparse
 from urllib.robotparser import RobotFileParser
 import re
+from typing import Any
 
 # Third‑party imports
 import httpx
@@ -40,53 +42,13 @@ from meilisearch_python_async import (
 from pydantic import BaseModel
 from dotenv import load_dotenv
 from monitoring import router as monitoring_router
+from backend.seo_geo_audit import audit_seo_geo, fetch_public_page
 
 # Local application imports
 
 # Laad environment variables uit het .env bestand in de root directory
 load_dotenv()
 
-
-
-def calculate_seo_score(html_content: str, url: str) -> int:
-    """Bereken SEO + geo relevantie score 0-100"""
-    score = 0
-    html_lower = html_content.lower()
-
-    # Title tag (20 punten)
-    if '<title>' in html_lower and '</title>' in html_lower:
-        score += 20
-
-    # Meta description (20 punten)
-    if 'meta name="description"' in html_lower or "meta name='description'" in html_lower:
-        score += 20
-
-    # H1 tag (10 punten)
-    if '<h1' in html_lower:
-        score += 10
-
-    # Afbeeldingen met alt (10 punten)
-    if '<img' in html_lower and 'alt=' in html_lower:
-        score += 10
-
-    # Structured data (20 punten)
-    if 'schema.org' in html_lower or 'application/ld+json' in html_lower:
-        score += 20
-
-    # Mobile viewport (10 punten)
-    if 'viewport' in html_lower:
-        score += 10
-
-    # Geo/lokale relevantie (10 punten)
-    geo_keywords = ["location", "address", "city", "country", "region",
-                    "coordinates", "map", "near", "distance", "local",
-                    "european", "eu", "brussels", "strasbourg"]
-    geo_count = sum(1 for kw in geo_keywords if kw in html_lower)
-    if geo_count >= 5: score += 10
-    elif geo_count >= 2: score += 7
-    elif geo_count >= 1: score += 5
-
-    return min(score, 100)
 
 
 @asynccontextmanager
@@ -982,41 +944,103 @@ def _build_user_prompt(context: str, q: str) -> str:
 
 @app.get("/api/benchmark/seo-geo")
 async def benchmark_seo_geo(url: str = None):
-    """Test SEO + geo scoring met echte URL of voorbeelden"""
-    
+    """Return separate on-page SEO and local GEO audit scores."""
     if url:
         try:
-            async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
-                response = await client.get(url)
-                response.raise_for_status()
-                html = response.text
-                score = calculate_seo_score(html, url)
-                return {
-                    "url": url,
-                    "seo_geo_score": score,
-                    "max_score": 100,
-                    "html_length": len(html),
-                    "scoring_breakdown": {
-                        "title_tag": 20,
-                        "meta_description": 20,
-                        "h1_tag": 10,
-                        "images_with_alt": 10,
-                        "structured_data": 20,
-                        "mobile_viewport": 10,
-                        "geo_keywords": 10
-                    }
-                }
-        except Exception as e:
-            return {"error": str(e), "url": url}
+            started_at = time.monotonic()
+            html, final_url, response_status, html_bytes = await fetch_public_page(url)
+            page_response_time_ms = round((time.monotonic() - started_at) * 1000)
+            site_root = f"{urlsplit(final_url).scheme}://{urlsplit(final_url).netloc}/"
+
+            async def probe(target: str) -> tuple[int | None, str]:
+                try:
+                    content, _, status_code, _ = await fetch_public_page(
+                        urljoin(site_root, target),
+                        timeout_seconds=3.0,
+                        max_bytes=200_000,
+                        expect_html=False,
+                        allow_http_errors=True,
+                    )
+                    return status_code, content
+                except (httpx.RequestError, ValueError):
+                    return None, ""
+
+            robots_status, robots_content = await probe("robots.txt")
+            robots_allowed = None
+            if robots_status is not None and robots_status < 400:
+                robots_parser = RobotFileParser()
+                robots_parser.parse(robots_content.splitlines())
+                robots_allowed = robots_parser.can_fetch("FajaedeAuditBot", final_url)
+
+            declared_sitemaps = [
+                line.split(":", 1)[1].strip()
+                for line in robots_content.splitlines()
+                if line.lower().startswith("sitemap:") and line.split(":", 1)[1].strip()
+            ][:3]
+            sitemap_targets = declared_sitemaps or ["sitemap.xml", "sitemap_index.xml", "wp-sitemap.xml"]
+            sitemap_results = await asyncio.gather(*(probe(target) for target in sitemap_targets))
+            sitemap_match = next(
+                (
+                    (target, result)
+                    for target, result in zip(sitemap_targets, sitemap_results)
+                    if result[0] is not None and result[0] < 400
+                ),
+                None,
+            )
+            if sitemap_match:
+                sitemap_url = urljoin(site_root, sitemap_match[0])
+                sitemap_status = sitemap_match[1][0]
+                sitemap_content = sitemap_match[1][1]
+            else:
+                sitemap_match = next(
+                    (
+                        (target, result)
+                        for target, result in zip(sitemap_targets, sitemap_results)
+                        if result[0] is not None
+                    ),
+                    None,
+                )
+                sitemap_url = urljoin(site_root, sitemap_match[0]) if sitemap_match else None
+                sitemap_status = sitemap_match[1][0] if sitemap_match else None
+                sitemap_content = sitemap_match[1][1] if sitemap_match else ""
+            audit = audit_seo_geo(
+                html,
+                final_url,
+                response_status=response_status,
+                response_time_ms=page_response_time_ms,
+                robots_status=robots_status,
+                sitemap_status=sitemap_status,
+                sitemap_url=sitemap_url,
+                sitemap_valid=(
+                    None if sitemap_status is None
+                    else sitemap_content if sitemap_status < 400
+                    else False
+                ),
+                robots_allowed=robots_allowed,
+            )
+            audit["html_bytes"] = html_bytes
+            return audit
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except httpx.TimeoutException as exc:
+            raise HTTPException(status_code=504, detail="The website did not respond within the audit timeout.") from exc
+        except httpx.HTTPStatusError as exc:
+            raise HTTPException(status_code=502, detail=f"The website returned HTTP {exc.response.status_code}.") from exc
+        except httpx.RequestError as exc:
+            raise HTTPException(status_code=502, detail="The website could not be fetched for an audit.") from exc
     else:
         test_cases = [
             {
                 "name": "EU institutionele pagina",
-                "html": """<html><title>European Commission - Brussels</title>
-                <meta name="description" content="Official EU site"><h1>Welcome</h1>
-                <img src="logo.png" alt="EU Logo"><div itemscope itemtype="https://schema.org/Organization">
-                <meta name="viewport" content="width=device-width">
-                <p>Location: Brussels, Belgium. Address: Rue de la Loi 200.</p></html>""",
+                "html": """<html lang="en"><head>
+                <title>European Commission - Official EU Policies and Services</title>
+                <meta name="description" content="Explore European Commission policies, services and information for citizens and businesses across the European Union.">
+                <meta name="viewport" content="width=device-width, initial-scale=1">
+                <link rel="canonical" href="https://commission.europa.eu/">
+                </head><body><h1>European Commission</h1><h2>Policies and services</h2>
+                <p>Official information and services for citizens and businesses across Europe.</p>
+                <script type="application/ld+json">{"@context":"https://schema.org","@type":"Organization","name":"European Commission"}</script>
+                <img src="/logo.png" alt="European Commission logo"></body></html>""",
                 "url": "https://commission.europa.eu"
             },
             {
@@ -1025,16 +1049,25 @@ async def benchmark_seo_geo(url: str = None):
                 "url": "https://example.com"
             }
         ]
-        
-        results = []
+
+        results: list[dict[str, Any]] = []
         for case in test_cases:
-            score = calculate_seo_score(case["html"], case["url"])
-            results.append({"name": case["name"], "seo_geo_score": score, "max_score": 100})
-        
+            audit = audit_seo_geo(case["html"], case["url"])
+            results.append({
+                "name": case["name"],
+                "seo_score": audit["seo_score"],
+                "geo_score": audit["geo_score"],
+                "seo_geo_score": audit["seo_geo_score"],
+                "max_score": audit["max_score"],
+                "scoring_breakdown": audit["scoring_breakdown"],
+                "issues": audit["issues"],
+                "coverage": audit["coverage"],
+            })
+
         return {
-            "benchmark": "SEO + Geo Scoring (examples)",
+            "benchmark": "Separate SEO and local GEO audit examples",
             "results": results,
-            "note": "Voeg ?url=https://... toe om een live URL te scoren"
+            "note": "Add ?url=https://... to run a live, single-page audit.",
         }
 
 
