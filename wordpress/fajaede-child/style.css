@@ -1,0 +1,19 @@
+/*
+Theme Name:   Fajaede
+Theme URI:    https://www.fajaede.nl/
+Description:  Zakelijk child-thema voor fajaede.nl op basis van Twenty Twenty-Four. Bevat een contactformulier met reCAPTCHA v3 en een personaliseerbare downloadpagina via shortcode.
+Author:       Fajaede
+Author URI:   https://www.fajaede.nl/
+Template:     twentytwentyfour
+Version:      0.1.0
+Requires at least: 6.4
+Requires PHP: 7.4
+License:      GNU General Public License v2 or later
+License URI:  http://www.gnu.org/licenses/gpl-2.0.html
+Text Domain:  fajaede
+*/
+
+/*
+ * Kleuren, typografie en spacing staan in theme.json.
+ * Dit bestand bevat alleen de theme-header; component-CSS staat in assets/css/.
+ */

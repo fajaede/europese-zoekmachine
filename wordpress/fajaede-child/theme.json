@@ -1,0 +1,75 @@
+{
+	"$schema": "https://schemas.wp.org/wp/6.4/theme.json",
+	"version": 2,
+	"settings": {
+		"color": {
+			"palette": [
+				{ "name": "Basis", "slug": "base", "color": "#ffffff" },
+				{ "name": "Basis / Twee", "slug": "base-2", "color": "#f4f6fa" },
+				{ "name": "Contrast", "slug": "contrast", "color": "#0f1b2d" },
+				{ "name": "Contrast / Twee", "slug": "contrast-2", "color": "#3a4659" },
+				{ "name": "Contrast / Drie", "slug": "contrast-3", "color": "#6b7687" },
+				{ "name": "Accent", "slug": "accent", "color": "#1d4ed8" },
+				{ "name": "Accent / Twee", "slug": "accent-2", "color": "#dbe6ff" },
+				{ "name": "Accent / Drie", "slug": "accent-3", "color": "#0b2a6b" },
+				{ "name": "Accent / Vier", "slug": "accent-4", "color": "#f5b301" },
+				{ "name": "Accent / Vijf", "slug": "accent-5", "color": "#e8edf5" }
+			]
+		},
+		"layout": {
+			"contentSize": "720px",
+			"wideSize": "1200px"
+		}
+	},
+	"styles": {
+		"color": {
+			"background": "var(--wp--preset--color--base)",
+			"text": "var(--wp--preset--color--contrast)"
+		},
+		"typography": {
+			"fontFamily": "var(--wp--preset--font-family--body)"
+		},
+		"elements": {
+			"heading": {
+				"typography": {
+					"fontFamily": "var(--wp--preset--font-family--body)",
+					"fontWeight": "700",
+					"letterSpacing": "-0.02em"
+				}
+			},
+			"button": {
+				"border": { "radius": "8px" },
+				"color": {
+					"background": "var(--wp--preset--color--accent)",
+					"text": "var(--wp--preset--color--base)"
+				},
+				":hover": {
+					"color": {
+						"background": "var(--wp--preset--color--accent-3)",
+						"text": "var(--wp--preset--color--base)"
+					}
+				},
+				":focus": {
+					"color": {
+						"background": "var(--wp--preset--color--accent-3)",
+						"text": "var(--wp--preset--color--base)"
+					}
+				}
+			},
+			"link": {
+				"color": { "text": "var(--wp--preset--color--accent)" },
+				":hover": {
+					"color": { "text": "var(--wp--preset--color--accent-3)" }
+				}
+			}
+		}
+	},
+	"customTemplates": [
+		{ "name": "page-download", "title": "Downloadpagina", "postTypes": [ "page" ] },
+		{ "name": "page-contact", "title": "Contactpagina", "postTypes": [ "page" ] }
+	],
+	"templateParts": [
+		{ "name": "header", "title": "Header", "area": "header" },
+		{ "name": "footer", "title": "Footer", "area": "footer" }
+	]
+}

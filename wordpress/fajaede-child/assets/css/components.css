@@ -1,0 +1,114 @@
+/* ---------- Meldingen ---------- */
+.fajaede-notice {
+	padding: 0.85rem 1rem;
+	border-radius: 8px;
+	border-left: 4px solid currentColor;
+}
+.fajaede-notice--success { background: #e8f6ee; color: #166534; }
+.fajaede-notice--error { background: #fdecec; color: #991b1b; }
+
+/* ---------- Formulier ---------- */
+.fajaede-form {
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	gap: 1rem 1.25rem;
+}
+.fajaede-form p { margin: 0; }
+.fajaede-form__field--full,
+.fajaede-form__actions,
+.fajaede-form__legal { grid-column: 1 / -1; }
+.fajaede-form label { display: block; font-weight: 600; margin-bottom: 0.35rem; }
+.fajaede-form__consent label { font-weight: 400; }
+.fajaede-form input[type="text"],
+.fajaede-form input[type="email"],
+.fajaede-form input[type="tel"],
+.fajaede-form textarea {
+	width: 100%;
+	box-sizing: border-box;
+	padding: 0.7rem 0.85rem;
+	border: 1px solid var(--wp--preset--color--contrast-3);
+	border-radius: 8px;
+	font: inherit;
+	background: var(--wp--preset--color--base);
+	color: var(--wp--preset--color--contrast);
+}
+.fajaede-form input:focus,
+.fajaede-form textarea:focus {
+	outline: 2px solid var(--wp--preset--color--accent);
+	outline-offset: 1px;
+}
+.fajaede-form button[disabled] { opacity: 0.6; cursor: progress; }
+.fajaede-form__legal { font-size: 0.8rem; color: var(--wp--preset--color--contrast-3); }
+.fajaede-form__hp { position: absolute; left: -9999px; width: 1px; height: 1px; overflow: hidden; }
+
+/* De badge mag weg, mits de tekst in .fajaede-form__legal zichtbaar is (Google-voorwaarde). */
+.grecaptcha-badge { visibility: hidden; }
+
+@media (max-width: 600px) {
+	.fajaede-form { grid-template-columns: 1fr; }
+}
+
+/* ---------- Downloads ---------- */
+.fajaede-downloads {
+	display: grid;
+	grid-template-columns: repeat(var(--fajaede-columns, 3), minmax(0, 1fr));
+	gap: 1.5rem;
+}
+@media (max-width: 900px) {
+	.fajaede-downloads { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 600px) {
+	.fajaede-downloads { grid-template-columns: 1fr; }
+}
+
+.fajaede-download {
+	display: flex;
+	flex-direction: column;
+	border: 1px solid var(--wp--preset--color--accent-5);
+	border-radius: 12px;
+	background: var(--wp--preset--color--base);
+	overflow: hidden;
+	box-shadow: 0 1px 2px rgba(15, 27, 45, 0.06);
+}
+.fajaede-download__media img { display: block; width: 100%; height: auto; }
+.fajaede-download__body { display: flex; flex-direction: column; gap: 0.6rem; padding: 1.5rem; flex: 1; }
+.fajaede-download__title { margin: 0; font-size: 1.25rem; }
+.fajaede-download__subtitle { margin: 0; color: var(--wp--preset--color--contrast-2); }
+.fajaede-download__description > :first-child { margin-top: 0; }
+.fajaede-download__description > :last-child { margin-bottom: 0; }
+.fajaede-download__meta {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0.4rem 1rem;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+	font-size: 0.85rem;
+	color: var(--wp--preset--color--contrast-3);
+}
+.fajaede-download__actions { margin: auto 0 0; padding-top: 0.5rem; }
+.fajaede-download__note { margin: 0; font-size: 0.85rem; color: var(--wp--preset--color--contrast-3); }
+.fajaede-download__badge {
+	align-self: flex-start;
+	padding: 0.15rem 0.6rem;
+	border-radius: 999px;
+	background: var(--wp--preset--color--accent-2);
+	color: var(--wp--preset--color--accent-3);
+	font-size: 0.8rem;
+	font-weight: 600;
+}
+
+/* Hero: één grote download, afbeelding naast tekst. */
+.fajaede-download--hero {
+	flex-direction: row;
+	align-items: center;
+	background: var(--wp--preset--color--base-2);
+	border: 0;
+}
+.fajaede-download--hero .fajaede-download__media { flex: 1 1 45%; }
+.fajaede-download--hero .fajaede-download__body { flex: 1 1 55%; padding: clamp(1.5rem, 4vw, 3rem); }
+.fajaede-download--hero .fajaede-download__title { font-size: clamp(1.75rem, 3vw, 2.5rem); }
+.fajaede-download--hero .fajaede-download__button { font-size: 1.1rem; padding: 0.9em 1.8em; }
+@media (max-width: 780px) {
+	.fajaede-download--hero { flex-direction: column; align-items: stretch; }
+}
