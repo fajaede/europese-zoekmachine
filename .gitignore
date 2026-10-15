@@ -89,3 +89,6 @@ Thumbs.db
 *.working-*
 
 backend/developer_keys.db
+
+# WordPress theme build zips
+/wordpress/*.zip
