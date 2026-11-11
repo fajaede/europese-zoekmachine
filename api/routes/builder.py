@@ -121,8 +121,16 @@ def init_builder_storage() -> None:
                 ON builder_payments(account_id, created_at);
             """
         )
-        stale_before = int(time.time()) - 15 * 60
+        now = int(time.time())
+        stale_before = now - 15 * 60
         connection.execute("BEGIN IMMEDIATE")
+        # Housekeeping: drop expired sessions/verifications and old rate-limit buckets.
+        connection.execute("DELETE FROM builder_sessions WHERE expires_at < ?", (now,))
+        connection.execute("DELETE FROM builder_verifications WHERE expires_at < ?", (now,))
+        connection.execute(
+            "DELETE FROM builder_rate_limits WHERE window_start < ?",
+            (now - 2 * 24 * 60 * 60,),
+        )
         stale_usage = connection.execute(
             """
             SELECT id, account_id, charge_type FROM builder_usage
@@ -152,6 +160,69 @@ def init_builder_storage() -> None:
 
 def _hash(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        return max(1, int(os.getenv(name, str(default))))
+    except ValueError:
+        return default
+
+
+# (scope, window seconds, max requests) - tunable via environment variables.
+VERIFY_LIMITS = (
+    ("verify-ip", 15 * 60, _env_int("BUILDER_VERIFY_PER_IP_15M", 5)),
+    ("verify-email", 60 * 60, _env_int("BUILDER_VERIFY_PER_EMAIL_HOUR", 3)),
+    ("verify-global", 60 * 60, _env_int("BUILDER_VERIFY_GLOBAL_HOUR", 100)),
+)
+GENERATE_LIMITS = (
+    ("generate-account", 60 * 60, _env_int("BUILDER_GENERATE_PER_ACCOUNT_HOUR", 10)),
+    ("generate-ip", 60 * 60, _env_int("BUILDER_GENERATE_PER_IP_HOUR", 15)),
+)
+FREE_LIMITS = (
+    ("free-ip", 24 * 60 * 60, _env_int("BUILDER_FREE_PER_IP_DAY", 3)),
+    ("free-global", 24 * 60 * 60, _env_int("BUILDER_FREE_GLOBAL_DAY", 200)),
+)
+
+
+def _client_ip(request: Request) -> str:
+    """Return the client IP as reported by the edge proxy (Vercel)."""
+    for header in ("x-vercel-forwarded-for", "x-real-ip", "x-forwarded-for"):
+        value = request.headers.get(header, "").split(",", maxsplit=1)[0].strip()
+        if value and len(value) <= 64:
+            return value
+    return request.client.host if request.client else "unknown"
+
+
+def _consume_rate_limits(
+    connection: sqlite3.Connection,
+    checks: list[tuple[str, str, int, int]],
+) -> bool:
+    """Increment every (scope, key, window, limit) bucket; False if any is exceeded.
+
+    Must run inside a transaction; the caller rolls back when False is returned.
+    """
+    now = int(time.time())
+    allowed = True
+    for scope, key, window, limit in checks:
+        scope_hash = _hash(f"{scope}:{key}")
+        bucket = now - now % window  # window start as a unix timestamp
+        connection.execute(
+            """
+            INSERT INTO builder_rate_limits (scope_hash, window_start, request_count)
+            VALUES (?, ?, 1)
+            ON CONFLICT(scope_hash, window_start)
+            DO UPDATE SET request_count = request_count + 1
+            """,
+            (scope_hash, bucket),
+        )
+        count = connection.execute(
+            "SELECT request_count FROM builder_rate_limits WHERE scope_hash = ? AND window_start = ?",
+            (scope_hash, bucket),
+        ).fetchone()["request_count"]
+        if count > limit:
+            allowed = False
+    return allowed
 
 
 def _get_session_account(request: Request) -> sqlite3.Row:
@@ -241,7 +312,7 @@ def _set_session_cookie(response: Response, request: Request, token: str) -> Non
     )
 
 
-def _reserve_usage(account_id: str) -> tuple[str, str]:
+def _reserve_usage(account_id: str, client_ip: str = "unknown") -> tuple[str, str]:
     connection = _connect()
     usage_id = str(uuid.uuid4())
     try:
@@ -252,6 +323,24 @@ def _reserve_usage(account_id: str) -> tuple[str, str]:
         ).fetchone()
         if not account:
             raise HTTPException(status_code=401, detail="Builder-account niet gevonden.")
+
+        keys = {
+            "generate-account": account_id,
+            "generate-ip": client_ip,
+            "free-ip": client_ip,
+            "free-global": "all",
+        }
+        limits = list(GENERATE_LIMITS)
+        if not account["free_used"]:
+            limits += list(FREE_LIMITS)
+        if not _consume_rate_limits(
+            connection,
+            [(scope, keys[scope], window, limit) for scope, window, limit in limits],
+        ):
+            raise HTTPException(
+                status_code=429,
+                detail="Te veel aanvragen op dit moment. Probeer het later opnieuw.",
+            )
 
         if not account["free_used"]:
             charge_type = "free"
@@ -329,32 +418,18 @@ def _finish_usage(usage_id: str, refund: bool) -> None:
 async def request_verification(payload: VerificationRequest, request: Request) -> dict[str, str]:
     public_url = _public_url()
     email = str(payload.email).strip().lower()
-    forwarded_for = request.headers.get("x-forwarded-for", "")
-    client_ip = (
-        forwarded_for.split(",", maxsplit=1)[0].strip()
-        or (request.client.host if request.client else "unknown")
-    )
-    scope_hash = _hash(f"verification:{client_ip}")
+    client_ip = _client_ip(request)
+    keys = {"verify-ip": client_ip, "verify-email": email, "verify-global": "all"}
     now = int(time.time())
-    bucket = now // (15 * 60)
     token = secrets.token_urlsafe(32)
     connection = _connect()
     try:
         connection.execute("BEGIN IMMEDIATE")
-        connection.execute(
-            """
-            INSERT INTO builder_rate_limits (scope_hash, window_start, request_count)
-            VALUES (?, ?, 1)
-            ON CONFLICT(scope_hash, window_start)
-            DO UPDATE SET request_count = request_count + 1
-            """,
-            (scope_hash, bucket),
+        allowed = _consume_rate_limits(
+            connection,
+            [(scope, keys[scope], window, limit) for scope, window, limit in VERIFY_LIMITS],
         )
-        count = connection.execute(
-            "SELECT request_count FROM builder_rate_limits WHERE scope_hash = ? AND window_start = ?",
-            (scope_hash, bucket),
-        ).fetchone()["request_count"]
-        if count > 5:
+        if not allowed:
             connection.rollback()
             raise HTTPException(status_code=429, detail="Te veel verificatieverzoeken. Probeer het later opnieuw.")
         connection.execute(
@@ -650,7 +725,7 @@ async def mollie_webhook(request: Request) -> dict[str, str]:
 @router.post("/generate")
 async def generate(payload: WebsiteRequest, request: Request) -> dict:
     account = _get_session_account(request)
-    usage_id, _ = _reserve_usage(account["id"])
+    usage_id, _ = _reserve_usage(account["id"], _client_ip(request))
     try:
         client = getattr(request.app.state, "openai_client", None)
         if client is None:

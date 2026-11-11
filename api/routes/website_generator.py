@@ -7,6 +7,33 @@ from typing import Any
 import openai
 
 
+_ACTIVE_BLOCKS = re.compile(
+    r"<(script|iframe|object|embed|frame|frameset|applet)\b[^>]*>.*?</\1\s*>",
+    re.IGNORECASE | re.DOTALL,
+)
+_ACTIVE_TAGS = re.compile(
+    r"</?(script|iframe|object|embed|frame|frameset|applet|base|meta\s+http-equiv)\b[^>]*>",
+    re.IGNORECASE,
+)
+_EVENT_ATTRS = re.compile(
+    r"""\s+on[a-z]+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)""",
+    re.IGNORECASE,
+)
+_DANGEROUS_URLS = re.compile(
+    r"""(\b(?:href|src|action|formaction|xlink:href)\s*=\s*["']?)\s*(?:javascript:|vbscript:|data:(?!image/(?:png|jpe?g|gif|webp)[;,]))""",
+    re.IGNORECASE,
+)
+
+
+def _strip_active_content(html_document: str) -> str:
+    """Remove scripts, embeds, event handlers and script URLs (defence in depth;
+    the preview iframe is also fully sandboxed)."""
+    html_document = _ACTIVE_BLOCKS.sub("", html_document)
+    html_document = _ACTIVE_TAGS.sub("", html_document)
+    html_document = _EVENT_ATTRS.sub("", html_document)
+    return _DANGEROUS_URLS.sub(r"\1#", html_document)
+
+
 class WebsiteGeneratorService:
     """Generate a static, self-contained HTML landing page."""
 
@@ -59,12 +86,7 @@ class WebsiteGeneratorService:
         ):
             raise RuntimeError("The website model returned an invalid page.")
 
-        html_document = re.sub(
-            r"<script\b[^>]*>.*?</script\s*>",
-            "",
-            html_document,
-            flags=re.IGNORECASE | re.DOTALL,
-        )
+        html_document = _strip_active_content(html_document)
         site_brief["keywords"] = [
             item for item in site_brief.get("keywords", []) if isinstance(item, str)
         ][:8]

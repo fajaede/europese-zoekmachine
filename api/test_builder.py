@@ -168,6 +168,55 @@ class BuilderTests(unittest.TestCase):
             )
             self.assertEqual(repeated_verification.status_code, 400)
 
+    def test_verification_mail_is_limited_per_email_regardless_of_ip(self):
+        app = FastAPI()
+        app.include_router(builder.router, prefix="/api/builder")
+        with (
+            TestClient(app) as client,
+            patch.object(builder, "send_email") as send_email_mock,
+            patch.dict(os.environ, {"BUILDER_PUBLIC_URL": "https://fajaede.eu"}),
+        ):
+            statuses = [
+                client.post(
+                    "/api/builder/auth/request-verification",
+                    json={"email": "victim@example.com"},
+                    headers={"x-forwarded-for": f"10.0.0.{index}"},
+                ).status_code
+                for index in range(5)
+            ]
+        self.assertEqual(statuses, [200, 200, 200, 429, 429])
+        self.assertEqual(send_email_mock.call_count, 3)
+
+    def test_free_generations_are_capped_per_ip(self):
+        connection = builder._connect()
+        for index in range(5):
+            connection.execute(
+                "INSERT INTO builder_accounts (id, email, created_at) VALUES (?, ?, ?)",
+                (f"free-{index}", f"free-{index}@example.test", int(time.time())),
+            )
+        connection.commit()
+        connection.close()
+
+        for index in range(3):
+            _, charge_type = builder._reserve_usage(f"free-{index}", "203.0.113.9")
+            self.assertEqual(charge_type, "free")
+        with self.assertRaises(HTTPException) as error:
+            builder._reserve_usage("free-3", "203.0.113.9")
+        self.assertEqual(error.exception.status_code, 429)
+        _, charge_type = builder._reserve_usage("free-4", "198.51.100.7")
+        self.assertEqual(charge_type, "free")
+
+    def test_generated_html_is_stripped_of_active_content(self):
+        from api.routes.website_generator import _strip_active_content
+
+        cleaned = _strip_active_content(
+            '<html><body onload="x()"><script>a</script>'
+            '<a href="javascript:alert(1)">x</a><img src=x onerror=alert(1)>'
+            '<iframe src="https://evil.test"></iframe></body></html>'
+        )
+        for needle in ("<script", "onload", "onerror", "javascript:", "<iframe"):
+            self.assertNotIn(needle, cleaned.lower())
+
     def test_checkout_fails_closed_when_mollie_is_not_configured(self):
         app = FastAPI()
         app.include_router(builder.router, prefix="/api/builder")
