@@ -1,8 +1,48 @@
 // app/builder/page.tsx
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
+
+const TURNSTILE_SITE_KEY = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY || '';
+const TURNSTILE_SCRIPT_SRC = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
+
+type TurnstileApi = {
+  render: (
+    container: HTMLElement,
+    options: {
+      sitekey: string;
+      language?: string;
+      callback: (token: string) => void;
+      'expired-callback'?: () => void;
+      'error-callback'?: () => void;
+    },
+  ) => string;
+  reset: (widgetId?: string) => void;
+  remove: (widgetId: string) => void;
+};
+
+declare global {
+  interface Window {
+    turnstile?: TurnstileApi;
+  }
+}
+
+function loadTurnstile(): Promise<TurnstileApi> {
+  if (window.turnstile) return Promise.resolve(window.turnstile);
+  return new Promise((resolve, reject) => {
+    let script = document.querySelector<HTMLScriptElement>(`script[src="${TURNSTILE_SCRIPT_SRC}"]`);
+    if (!script) {
+      script = document.createElement('script');
+      script.src = TURNSTILE_SCRIPT_SRC;
+      script.async = true;
+      script.defer = true;
+      document.head.appendChild(script);
+    }
+    script.addEventListener('load', () => (window.turnstile ? resolve(window.turnstile) : reject(new Error('Turnstile niet beschikbaar.'))));
+    script.addEventListener('error', () => reject(new Error('Captcha kon niet worden geladen.')));
+  });
+}
 
 type SiteBrief = {
   target_audience?: string;
@@ -37,6 +77,10 @@ export default function BuilderPage() {
   const [accountMessage, setAccountMessage] = useState('');
   const [accountError, setAccountError] = useState<string | null>(null);
   const [checkoutLoading, setCheckoutLoading] = useState(false);
+  const [captchaToken, setCaptchaToken] = useState('');
+  const captchaContainerRef = useRef<HTMLDivElement | null>(null);
+  const captchaWidgetIdRef = useRef<string | null>(null);
+  const showEmailForm = account !== null && !account.authenticated && !verificationToken;
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -81,6 +125,43 @@ export default function BuilderPage() {
     void loadPageState();
   }, []);
 
+  useEffect(() => {
+    if (!TURNSTILE_SITE_KEY || !showEmailForm) return;
+    let cancelled = false;
+    loadTurnstile()
+      .then((turnstile) => {
+        const container = captchaContainerRef.current;
+        if (cancelled || !container || captchaWidgetIdRef.current) return;
+        captchaWidgetIdRef.current = turnstile.render(container, {
+          sitekey: TURNSTILE_SITE_KEY,
+          language: 'nl',
+          callback: (token) => setCaptchaToken(token),
+          'expired-callback': () => setCaptchaToken(''),
+          'error-callback': () => setCaptchaToken(''),
+        });
+      })
+      .catch((captchaError: unknown) => {
+        if (!cancelled) {
+          setAccountError(captchaError instanceof Error ? captchaError.message : 'Captcha kon niet worden geladen.');
+        }
+      });
+    return () => {
+      cancelled = true;
+      if (captchaWidgetIdRef.current && window.turnstile) {
+        window.turnstile.remove(captchaWidgetIdRef.current);
+      }
+      captchaWidgetIdRef.current = null;
+      setCaptchaToken('');
+    };
+  }, [showEmailForm]);
+
+  function resetCaptcha() {
+    setCaptchaToken('');
+    if (captchaWidgetIdRef.current && window.turnstile) {
+      window.turnstile.reset(captchaWidgetIdRef.current);
+    }
+  }
+
   async function handleEmailVerification() {
     setAccountError(null);
     try {
@@ -106,11 +187,15 @@ export default function BuilderPage() {
     e.preventDefault();
     setAccountError(null);
     setAccountMessage('');
+    if (TURNSTILE_SITE_KEY && !captchaToken) {
+      setAccountError('Bevestig eerst dat je geen robot bent.');
+      return;
+    }
     try {
       const response = await fetch('/api/builder/auth/request-verification', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email }),
+        body: JSON.stringify({ email, captcha_token: captchaToken }),
       });
       const data = await response.json();
       if (!response.ok) {
@@ -119,6 +204,9 @@ export default function BuilderPage() {
       setAccountMessage(data.message);
     } catch (requestError) {
       setAccountError(requestError instanceof Error ? requestError.message : 'Er ging iets mis.');
+    } finally {
+      // Turnstile tokens are single-use; get a fresh one for any next attempt.
+      resetCaptcha();
     }
   }
 
@@ -321,10 +409,14 @@ export default function BuilderPage() {
                 </div>
                 <button
                   type="submit"
-                  className="self-end rounded-full bg-orange-500 px-5 py-3 text-sm font-semibold text-white transition-colors hover:bg-orange-600"
+                  disabled={Boolean(TURNSTILE_SITE_KEY) && !captchaToken}
+                  className="self-end rounded-full bg-orange-500 px-5 py-3 text-sm font-semibold text-white transition-colors hover:bg-orange-600 disabled:cursor-not-allowed disabled:bg-orange-300"
                 >
                   Stuur verificatielink
                 </button>
+                {TURNSTILE_SITE_KEY && (
+                  <div ref={captchaContainerRef} className="min-h-16.25 sm:col-span-2" />
+                )}
               </form>
             )}
             {accountMessage && <p role="status" className="mt-3 text-sm text-emerald-700">{accountMessage}</p>}

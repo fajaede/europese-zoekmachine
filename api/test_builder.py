@@ -187,6 +187,48 @@ class BuilderTests(unittest.TestCase):
         self.assertEqual(statuses, [200, 200, 200, 429, 429])
         self.assertEqual(send_email_mock.call_count, 3)
 
+    def test_captcha_is_required_when_turnstile_is_configured(self):
+        app = FastAPI()
+        app.include_router(builder.router, prefix="/api/builder")
+        turnstile_calls = []
+
+        async def fake_post(_client, url, data=None, **_kwargs):
+            turnstile_calls.append(data)
+            request = builder.httpx.Request("POST", url)
+            success = data["response"] == "good-token"
+            return builder.httpx.Response(200, json={"success": success}, request=request)
+
+        with (
+            TestClient(app) as client,
+            patch.object(builder, "send_email") as send_email_mock,
+            patch.object(builder.httpx.AsyncClient, "post", fake_post),
+            patch.dict(
+                os.environ,
+                {
+                    "BUILDER_PUBLIC_URL": "https://fajaede.eu",
+                    "TURNSTILE_SECRET_KEY": "test-secret",
+                },
+            ),
+        ):
+            missing = client.post(
+                "/api/builder/auth/request-verification",
+                json={"email": "user@example.com"},
+            )
+            bad = client.post(
+                "/api/builder/auth/request-verification",
+                json={"email": "user@example.com", "captcha_token": "bad-token"},
+            )
+            good = client.post(
+                "/api/builder/auth/request-verification",
+                json={"email": "user@example.com", "captcha_token": "good-token"},
+            )
+        self.assertEqual(missing.status_code, 400)
+        self.assertEqual(bad.status_code, 400)
+        self.assertEqual(good.status_code, 200)
+        self.assertEqual(len(turnstile_calls), 2)
+        self.assertEqual(turnstile_calls[0]["secret"], "test-secret")
+        self.assertEqual(send_email_mock.call_count, 1)
+
     def test_free_generations_are_capped_per_ip(self):
         connection = builder._connect()
         for index in range(5):

@@ -38,8 +38,12 @@ CREDIT_PACK_PRICE = "5.00"
 MOLLIE_API_BASE = "https://api.mollie.com/v2"
 
 
+TURNSTILE_VERIFY_URL = "https://challenges.cloudflare.com/turnstile/v0/siteverify"
+
+
 class VerificationRequest(BaseModel):
     email: EmailStr
+    captcha_token: str = Field(default="", max_length=2048)
 
 
 class VerificationConfirmation(BaseModel):
@@ -192,6 +196,35 @@ def _client_ip(request: Request) -> str:
         if value and len(value) <= 64:
             return value
     return request.client.host if request.client else "unknown"
+
+
+async def _verify_captcha(token: str, client_ip: str) -> None:
+    """Validate a Cloudflare Turnstile token when TURNSTILE_SECRET_KEY is set."""
+    secret = os.getenv("TURNSTILE_SECRET_KEY", "").strip()
+    if not secret:
+        logger.warning("TURNSTILE_SECRET_KEY is not set; builder captcha is disabled.")
+        return
+    if not token:
+        raise HTTPException(status_code=400, detail="Bevestig eerst dat je geen robot bent.")
+    data = {"secret": secret, "response": token}
+    if client_ip and client_ip != "unknown":
+        data["remoteip"] = client_ip
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            response = await client.post(TURNSTILE_VERIFY_URL, data=data)
+            response.raise_for_status()
+            result = response.json()
+    except (httpx.HTTPError, ValueError):
+        logger.exception("Could not verify Turnstile token")
+        raise HTTPException(
+            status_code=503,
+            detail="De captcha kon niet worden gecontroleerd. Probeer het opnieuw.",
+        ) from None
+    if result.get("success") is not True:
+        raise HTTPException(
+            status_code=400,
+            detail="Captcha ongeldig of verlopen. Probeer het opnieuw.",
+        )
 
 
 def _consume_rate_limits(
@@ -419,6 +452,7 @@ async def request_verification(payload: VerificationRequest, request: Request) -
     public_url = _public_url()
     email = str(payload.email).strip().lower()
     client_ip = _client_ip(request)
+    await _verify_captcha(payload.captcha_token, client_ip)
     keys = {"verify-ip": client_ip, "verify-email": email, "verify-global": "all"}
     now = int(time.time())
     token = secrets.token_urlsafe(32)
