@@ -33,6 +33,8 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
 
   // Gebruik de API URL voor sitemap generatie, met fallback voor lokaal.
   const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:18000";
+  const sitemapApiKey = process.env.SITEMAP_API_KEY;
+  if (!sitemapApiKey) return staticRoutes;
 
   let dynamicUrls: MetadataRoute.Sitemap = [];
   try {
@@ -47,6 +49,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
       method: "GET", // Search endpoint is GET
       headers: {
         "X-Sitemap-Request": "true",
+        "X-Sitemap-API-Key": sitemapApiKey,
       },
       next: { revalidate: 3600 }, // Cache dit resultaat voor 1 uur (Vercel)
     });
@@ -54,20 +57,31 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     if (res.ok) {
       const data = await res.json();
       // De API retourneert 'results', niet 'hits'
-      dynamicUrls = data.results.map((hit: { url: string; published_at?: string }) => {
+      const allowedOrigin = new URL(baseUrl).origin;
+      const hits = Array.isArray(data.results) ? data.results : [];
+      dynamicUrls = hits.flatMap((hit: { url?: unknown; published_at?: unknown }) => {
+        if (typeof hit.url !== "string" || hit.url.length > 2048) return [];
+        let parsedUrl: URL;
+        try {
+          parsedUrl = new URL(hit.url);
+        } catch {
+          return [];
+        }
+        if (!["http:", "https:"].includes(parsedUrl.protocol) || parsedUrl.origin !== allowedOrigin) return [];
+
         let lastMod = new Date();
-        if (hit.published_at) {
+        if (typeof hit.published_at === "string") {
           const parsed = new Date(hit.published_at);
           if (!isNaN(parsed.getTime())) {
             lastMod = parsed;
           }
         }
-        return {
-          url: hit.url,
+        return [{
+          url: parsedUrl.toString(),
           lastModified: lastMod,
           changeFrequency: "weekly",
           priority: 0.6,
-        };
+        }];
       });
     } else {
       console.error("Kon dynamische sitemap niet laden via API:", await res.text());

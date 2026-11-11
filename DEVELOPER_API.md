@@ -13,6 +13,30 @@ Een API waarmee developers zich kunnen registreren met hun email om een API key 
 ✅ **Usage Tracking** - Houd bij hoeveel requests elke developer maakt  
 ✅ **Developer Dashboard** - HTML pagina met documentatie en voorbeelden  
 
+## Serverconfiguratie voor e-mailverificatie
+
+Stel deze variabelen uitsluitend in op de backendserver; commit geen `.env`-bestand:
+
+```env
+DEVELOPER_VERIFICATION_BASE_URL=https://api.fajaede.eu
+SMTP_HOST=<smtp-host>
+SMTP_PORT=587
+SMTP_USER=<smtp-user>
+SMTP_PASS=<smtp-password>
+SMTP_FROM=<verified-sender-address>
+```
+
+Productie vereist HTTPS voor `DEVELOPER_VERIFICATION_BASE_URL`. Lokale ontwikkeling mag `http://localhost:18000` gebruiken. Zonder mailconfiguratie wordt geen developer-key aangemaakt.
+
+## Beveiliging
+
+- Een API-key wordt pas na mailboxverificatie eenmalig getoond. Bij een bestaand e-mailadres roteert bevestiging de oude key.
+- Registratie is begrensd per client-IP; API-gebruik heeft een atomische daglimiet.
+- Behandel de API-key als een wachtwoord. Bewaar hem uitsluitend server-side in een environment variable.
+- Zet nooit een API-key in browser-JavaScript, een publieke repository, screenshots of logs.
+- Registratie-antwoorden zijn generiek om account-enumeratie te beperken; verificatietokens verlopen na 30 minuten en zijn eenmalig.
+- Een eerder in broncode gepleegde ValueSERP-key-publicatie vereist intrekken en rouleren in het ValueSERP-dashboard.
+
 ## Endpoints
 
 ### 1. Registreer een Developer
@@ -25,15 +49,15 @@ Content-Type: application/json
   "project_name": "Mijn EU News Site"
 }
 
-Response:
+Response (`202 Accepted`; dezelfde tekst voor nieuwe en bestaande accounts):
 {
-  "api_key": "sk_eu_ryyCYDZJ7FqoGzaN67rRPG9IpsDKnCNa",
-  "email": "jij@voorbeeld.nl",
-  "project_name": "Mijn EU News Site",
-  "daily_limit": 100,
-  "message": "Succesvol geregistreerd!"
+  "message": "Als dit adres kan worden geregistreerd, ontvang je een verificatiemail."
 }
 ```
+
+Open de mail-link en bevestig het adres. Sla daarna de API-key uit het eenmalige verificatieantwoord op in een server-side environment variable.
+
+De verificatieflow gebruikt `GET /api/developers/verify?token=...` om een bevestigingspagina te tonen; deze GET wijzigt geen account. De bevestigingsknop doet een `POST /api/developers/verify` met de token. De token verloopt na 30 minuten.
 
 ### 2. Genereer SEO Metadata
 ```bash
@@ -110,11 +134,12 @@ De Developer API is al geïnstalleerd! Files:
 ### Python
 ```python
 import requests
+import os
 
-API_KEY = "sk_eu_jouw_key"
+API_KEY = os.environ["EUROPEAN_SEARCH_API_KEY"]
 
 response = requests.post(
-    "http://localhost:8000/api/developers/seo/generate",
+    "https://api.fajaede.eu/api/developers/seo/generate",
     headers={"X-API-Key": API_KEY},
     json={
         "content": "EU Parlement stemt over nieuwe klimaatwet...",
@@ -131,9 +156,9 @@ print(f"Score: {seo['score']}")
 
 ### JavaScript/Node.js
 ```javascript
-const API_KEY = "sk_eu_jouw_key";
+const API_KEY = process.env.EUROPEAN_SEARCH_API_KEY;
 
-const response = await fetch("http://localhost:8000/api/developers/seo/generate", {
+const response = await fetch("https://api.fajaede.eu/api/developers/seo/generate", {
     method: "POST",
     headers: {
         "X-API-Key": API_KEY,
@@ -153,7 +178,7 @@ console.log("Description:", seo.meta_description);
 
 ### cURL
 ```bash
-curl -X POST http://localhost:8000/api/developers/seo/generate \
+curl -X POST https://api.fajaede.eu/api/developers/seo/generate \
   -H "X-API-Key: sk_eu_jouw_key" \
   -H "Content-Type: application/json" \
   -d '{
@@ -183,11 +208,10 @@ curl -X POST http://localhost:8000/api/developers/seo/generate \
 
 ## Next Steps
 
-1. **Email Verificatie** - Stuur verificatie email bij registratie
-2. **API Key Management** - Laat developers keys resetten/revoken
-3. **Betaalde Tiers** - Hogere limieten voor betalende developers
-4. **Analytics Dashboard** - Toon graphs van API usage
-5. **Documentation Site** - Volledige API docs met Swagger
+1. **API Key Management** - Voeg een authenticated revoke endpoint toe
+2. **Betaalde Tiers** - Hogere limieten voor betalende developers
+3. **Analytics Dashboard** - Toon graphs van API usage
+4. **Documentation Site** - Volledige API docs met Swagger
 
 ---
 

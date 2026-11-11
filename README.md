@@ -1,11 +1,13 @@
 
 ---
 
-## 🔧 Quick Start - Copy-Paste Script
+## Veilige API-integratie
 
 ### Voorbeeld: Integratie in Je Website
 
-Kopieer dit script en plak het in de `<head>` van je HTML:
+Plaats een developer-API-key nooit in HTML, browser-JavaScript, `localStorage` of een publieke repository. Bezoekers kunnen die key uit de browser halen en jouw dagelijkse API-limiet verbruiken.
+
+De browser mag alleen jouw eigen same-origin backend-route aanroepen. Die route bewaart `EUROPEAN_SEARCH_API_KEY` op de server en stuurt het verzoek door naar de Developer API. De key wordt nooit naar de browser teruggestuurd. Zie `DEVELOPER_API.md` voor server-side voorbeelden.
 
 ```html
 <!DOCTYPE html>
@@ -20,8 +22,7 @@ Kopieer dit script en plak het in de `<head>` van je HTML:
       (function() {
         // === CONFIGURATIE ===
         const SEO_CONFIG = {
-          API_KEY: 'PLAK_HIER_JOUW_API_KEY', // Vervang met jouw API key van [https://api.fajaede.eu/developers](https://api.fajaede.eu/developers)
-          API_URL: '[https://api.fajaede.eu/api/developers/seo/generate](https://api.fajaede.eu/api/developers/seo/generate)',
+          API_URL: '/api/seo/generate', // Same-origin backend proxy; implement this route on your server.
           
           // VUL HIER JOUW PAGINA CONTENT IN
           pages: {
@@ -48,7 +49,6 @@ Kopieer dit script en plak het in de `<head>` van je HTML:
             const response = await fetch(SEO_CONFIG.API_URL, {
               method: 'POST',
               headers: {
-                'X-API-Key': SEO_CONFIG.API_KEY,
                 'Content-Type': 'application/json'
               },
               body: JSON.stringify({
@@ -109,15 +109,34 @@ Kopieer dit script en plak het in de `<head>` van je HTML:
 
 ### Stappenplan:
 
-1. **Ga naar** https://api.fajaede.eu/developers
-2. **Registreer** met je email
-3. **Kopieer** je API key
-4. **Vervang** `PLAK_HIER_JOUW_API_KEY` in het script
-5. **Vul** je content in bij `pages:`
-6. **Plak** het script in je HTML `<head>`
-7. **Upload** naar je server
-8. **Klaar!** 🎉
+1. Registreer voor een API-key via de Developer API.
+2. Bewaar de key als `EUROPEAN_SEARCH_API_KEY` in je serveromgeving.
+3. Implementeer `/api/seo/generate` als server-side proxy die de key toevoegt.
+4. Laat browsercode uitsluitend jouw eigen same-origin route aanroepen.
+5. Commit nooit `.env`-bestanden of sleutels.
 
+## Server-side environment configuration
+
+Configure these values in the relevant server/container environment, never in browser code or public `NEXT_PUBLIC_*` variables:
+
+- `SITEMAP_API_KEY`: same random secret in the Python backend and `frontend-next`; required for the large sitemap-only search request.
+- `MEILI_MASTER_KEY`: Meilisearch server key; do not use a public/default key.
+- `VALUESERP_API_KEY`: replacement key for the ValueSERP scraper. The old source-embedded token was removed and must be revoked at ValueSERP.
+- `DEVELOPER_VERIFICATION_BASE_URL`, `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD` (or legacy `SMTP_PASS`), `SMTP_FROM`: required for email verification; see `DEVELOPER_API.md`.
+- `ADMIN_API_KEY`: required for crawler stop/reset operations.
+
+Use a unique, high-entropy secret for `SITEMAP_API_KEY` and `ADMIN_API_KEY`, and rotate either if it has ever been committed or shared.
+
+### Website Builder payments
+
+The Builder includes one free generation per verified email address. Additional generations use one credit each; a pack of 10 credits costs €5.00 including VAT (€0.50 per generation). Configure these server-side values before enabling checkout:
+
+- `OPENAI_API_KEY`: valid server-side OpenAI API key.
+- `MOLLIE_MODE=test` and `MOLLIE_API_KEY=test_...`: test-mode payment credentials. The key prefix must match the selected mode.
+- `BUILDER_PUBLIC_URL`: public Builder URL used for email verification and checkout return links.
+- `BUILDER_WEBHOOK_URL`: publicly reachable HTTPS URL ending in `/api/builder/payments/webhook`.
+
+Verify test payments and credit fulfillment before switching to `MOLLIE_MODE=live` with a Mollie live API key. Never expose API keys in frontend or `NEXT_PUBLIC_*` variables. At the current package price, Mollie fees, VAT, OpenAI usage and other operating costs reduce revenue; enforce and monitor model token limits before launch.
 ### Voorbeeld Content:
 
 ```javascript
@@ -127,4 +146,3 @@ pages: {
   '/contact': "Bezoek Bakkerij Jan, Kalverstraat 123 Amsterdam. Tel: 020-1234567. Open: Ma-Za 7:00-18:00, Zo 8:00-17:00."
 }
 ```
-

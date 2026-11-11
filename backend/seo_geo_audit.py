@@ -63,6 +63,65 @@ async def validate_public_url(value: str) -> str:
     return await asyncio.to_thread(_resolve_public_url, value)
 
 
+async def fetch_public_resource(
+    url: str,
+    *,
+    timeout_seconds: float = 8.0,
+    max_bytes: int = MAX_HTML_BYTES,
+    headers: dict[str, str] | None = None,
+    allowed_domain: str | None = None,
+) -> tuple[bytes, str, int, httpx.Headers]:
+    """Fetch a public resource, validating every redirect and bounding its body."""
+    current_url = await validate_public_url(url)
+    request_headers = {"User-Agent": USER_AGENT, "Accept": "*/*"}
+    if headers:
+        request_headers.update(headers)
+
+    async with httpx.AsyncClient(
+        timeout=timeout_seconds,
+        follow_redirects=False,
+        trust_env=False,
+        headers=request_headers,
+    ) as client:
+        for redirect_count in range(MAX_REDIRECTS + 1):
+            if allowed_domain:
+                hostname = urlsplit(current_url).hostname
+                scope = allowed_domain.lower().removeprefix("www.").rstrip(".")
+                normalized_hostname = (hostname or "").lower().removeprefix("www.").rstrip(".")
+                if normalized_hostname != scope and not normalized_hostname.endswith(f".{scope}"):
+                    raise ValueError("The redirect left the allowed crawl domain.")
+
+            async with client.stream("GET", current_url) as response:
+                if response.is_redirect:
+                    location = response.headers.get("location")
+                    if not location:
+                        raise ValueError("The website returned a redirect without a destination.")
+                    if redirect_count == MAX_REDIRECTS:
+                        raise ValueError("The website exceeded the redirect limit.")
+                    current_url = await validate_public_url(urljoin(current_url, location))
+                    continue
+
+                declared_length = response.headers.get("content-length")
+                if declared_length and response.request.method != "HEAD":
+                    try:
+                        parsed_length = int(declared_length)
+                    except ValueError:
+                        parsed_length = 0
+                    if parsed_length > max_bytes:
+                        raise ValueError("The response exceeds the download size limit.")
+
+                chunks: list[bytes] = []
+                size = 0
+                async for chunk in response.aiter_bytes():
+                    size += len(chunk)
+                    if size > max_bytes:
+                        raise ValueError("The response exceeds the download size limit.")
+                    chunks.append(chunk)
+                return b"".join(chunks), current_url, response.status_code, response.headers
+
+    raise ValueError("The website exceeded the redirect limit.")
+
+
 async def fetch_public_page(
     url: str,
     *,
@@ -70,48 +129,30 @@ async def fetch_public_page(
     max_bytes: int = MAX_HTML_BYTES,
     expect_html: bool = True,
     allow_http_errors: bool = False,
+    allowed_domain: str | None = None,
 ) -> tuple[str, str, int, int]:
     """Fetch a public page while validating every redirect target."""
-    current_url = await validate_public_url(url)
-    headers = {
-        "User-Agent": USER_AGENT,
-        "Accept": "text/html,application/xhtml+xml",
-    }
-
-    async with httpx.AsyncClient(
-        timeout=timeout_seconds,
-        follow_redirects=False,
-        trust_env=False,
-        headers=headers,
-    ) as client:
-        for _ in range(MAX_REDIRECTS + 1):
-            async with client.stream("GET", current_url) as response:
-                if response.is_redirect:
-                    location = response.headers.get("location")
-                    if not location:
-                        raise ValueError("The website returned a redirect without a destination.")
-                    current_url = await validate_public_url(urljoin(current_url, location))
-                    continue
-
-                if response.is_error and not allow_http_errors:
-                    response.raise_for_status()
-                content_type = response.headers.get("content-type", "").lower()
-                if expect_html and content_type and "html" not in content_type and "xhtml" not in content_type:
-                    raise ValueError("The URL did not return an HTML page.")
-
-                chunks: list[bytes] = []
-                size = 0
-                async for chunk in response.aiter_bytes():
-                    size += len(chunk)
-                    if size > max_bytes:
-                        raise ValueError("The HTML page exceeds the audit size limit.")
-                    chunks.append(chunk)
-
-                encoding = response.encoding or "utf-8"
-                html = b"".join(chunks).decode(encoding, errors="replace")
-                return html, str(response.url), response.status_code, size
-
-    raise ValueError("The website exceeded the redirect limit.")
+    body, final_url, status_code, response_headers = await fetch_public_resource(
+        url,
+        timeout_seconds=timeout_seconds,
+        max_bytes=max_bytes,
+        allowed_domain=allowed_domain,
+    )
+    if status_code >= 400 and not allow_http_errors:
+        raise httpx.HTTPStatusError(
+            f"The website returned HTTP {status_code}.",
+            request=httpx.Request("GET", final_url),
+            response=httpx.Response(status_code, request=httpx.Request("GET", final_url)),
+        )
+    content_type = response_headers.get("content-type", "").lower()
+    if expect_html and content_type and "html" not in content_type and "xhtml" not in content_type:
+        raise ValueError("The URL did not return an HTML page.")
+    encoding = response_headers.get("content-encoding", "")
+    charset = "utf-8"
+    if "charset=" in content_type:
+        charset = content_type.split("charset=", 1)[1].split(";", 1)[0].strip(" \"'") or charset
+    html = body.decode(charset, errors="replace")
+    return html, final_url, status_code, len(body)
 
 
 def _flatten_jsonld(value: Any) -> Iterator[dict[str, Any]]:

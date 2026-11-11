@@ -30,6 +30,52 @@ export type Message = {
   content: string;
 };
 
+function safeWebUrl(value?: string): string | null {
+  if (!value || value.length > 2048) return null;
+  try {
+    const parsed = new URL(value);
+    if (parsed.protocol !== "https:" || parsed.username || parsed.password) return null;
+    const hostname = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, "").replace(/\.$/, "");
+    const isIpLiteral = /^\d{1,3}(?:\.\d{1,3}){3}$/.test(hostname) || parsed.hostname.startsWith("[");
+    if (isIpLiteral || hostname === "localhost" || hostname.endsWith(".localhost") || hostname.endsWith(".local") || hostname === "metadata.google.internal") return null;
+    return parsed.toString();
+  } catch {
+    return null;
+  }
+}
+
+function safeImageUrl(value?: string): string | null {
+  const safeUrl = safeWebUrl(value);
+  return safeUrl && new URL(safeUrl).protocol === "https:" ? safeUrl : null;
+}
+
+function youtubeEmbedUrl(value?: string): string | null {
+  const safeUrl = safeWebUrl(value);
+  if (!safeUrl) return null;
+  const parsed = new URL(safeUrl);
+  const host = parsed.hostname.toLowerCase();
+  let videoId: string | null = null;
+
+  if (host === "youtu.be") videoId = parsed.pathname.split("/").filter(Boolean)[0] ?? null;
+  if (["youtube.com", "www.youtube.com", "m.youtube.com"].includes(host)) {
+    if (parsed.pathname === "/watch") videoId = parsed.searchParams.get("v");
+    else if (parsed.pathname.startsWith("/embed/")) videoId = parsed.pathname.split("/")[2] ?? null;
+    else if (parsed.pathname.startsWith("/shorts/")) videoId = parsed.pathname.split("/")[2] ?? null;
+  }
+
+  return videoId && /^[A-Za-z0-9_-]{11}$/.test(videoId)
+    ? `https://www.youtube-nocookie.com/embed/${videoId}`
+    : null;
+}
+
+const fallbackImages = [
+  "https://images.unsplash.com/photo-1451187580459-43490279c0fa?w=500&auto=format&fit=crop&q=60",
+  "https://images.unsplash.com/photo-1460925895917-afdab827c52f?w=500&auto=format&fit=crop&q=60",
+  "https://images.unsplash.com/photo-1504711434969-e33886168f5c?w=500&auto=format&fit=crop&q=60",
+  "https://images.unsplash.com/photo-1507608869274-d3177c8bb4c7?w=500&auto=format&fit=crop&q=60",
+  "https://images.unsplash.com/photo-1486406146926-c627a92ad1ab?w=500&auto=format&fit=crop&q=60",
+];
+
 export default function Home() {
   const [q, setQ] = useState("");
   const [hits, setHits] = useState<Hit[]>([]);
@@ -221,9 +267,9 @@ export default function Home() {
   return (
     <main className="relative flex min-h-screen flex-col items-center justify-center bg-slate-50 px-4 overflow-hidden">
       {/* Premium achtergrond patroon en ambient glows */}
-      <div className="absolute inset-0 -z-10 h-full w-full bg-[radial-gradient(#e2e8f0_1px,transparent_1px)] [background-size:20px_20px] opacity-70"></div>
-      <div className="absolute top-[-10%] left-[-10%] h-[600px] w-[600px] rounded-full bg-orange-100/40 blur-[100px] -z-10"></div>
-      <div className="absolute bottom-[-10%] right-[-10%] h-[600px] w-[600px] rounded-full bg-blue-100/30 blur-[120px] -z-10"></div>
+      <div className="absolute inset-0 -z-10 h-full w-full bg-[radial-gradient(#e2e8f0_1px,transparent_1px)] bg-size-[20px_20px] opacity-70"></div>
+      <div className="absolute top-[-10%] left-[-10%] h-150 w-150 rounded-full bg-orange-100/40 blur-[100px] -z-10"></div>
+      <div className="absolute bottom-[-10%] right-[-10%] h-150 w-150 rounded-full bg-blue-100/30 blur-[120px] -z-10"></div>
 
       <div className="w-full max-w-4xl flex flex-col items-center text-center relative z-10">
         {/* Version Badge */}
@@ -234,7 +280,7 @@ export default function Home() {
 
         {/* Logo / Header */}
         <h1 className="text-6xl md:text-8xl font-black text-slate-900 mb-6 tracking-tight">
-          fajaede<span className="bg-gradient-to-r from-orange-500 to-amber-500 bg-clip-text text-transparent">AI+</span>
+          fajaede<span className="bg-linear-to-r from-orange-500 to-amber-500 bg-clip-text text-transparent">AI+</span>
         </h1>
         <p className="text-lg md:text-xl text-slate-600 mb-10 max-w-2xl font-normal leading-relaxed">
           De onafhankelijke Europese zoekmachine. Veilig, neutraal en zonder profilering of tracking het web doorzoeken.
@@ -248,6 +294,7 @@ export default function Home() {
           <input
             type="text"
             name="q"
+            maxLength={200}
             value={q}
             onChange={(e) => setQ(e.target.value)}
             placeholder="Zoek veilig en anoniem..."
@@ -280,7 +327,7 @@ export default function Home() {
           <div className="w-full max-w-3xl flex justify-start gap-4 md:gap-6 border-b border-slate-200 pb-0 mb-6 text-sm font-semibold text-slate-500 overflow-x-auto">
             <button 
               onClick={() => handleTabClick("all")}
-              className={`hover:text-orange-500 transition-colors pb-3 -mb-[2px] border-b-2 flex items-center gap-1.5 cursor-pointer whitespace-nowrap ${
+              className={`hover:text-orange-500 transition-colors pb-3 -mb-0.5 border-b-2 flex items-center gap-1.5 cursor-pointer whitespace-nowrap ${
                 activeTab === "all" ? "text-orange-500 border-orange-500 font-bold" : "border-transparent text-slate-500"
               }`}
             >
@@ -288,7 +335,7 @@ export default function Home() {
             </button>
             <button 
               onClick={() => handleTabClick("images")}
-              className={`hover:text-orange-500 transition-colors pb-3 -mb-[2px] border-b-2 flex items-center gap-1.5 cursor-pointer whitespace-nowrap ${
+              className={`hover:text-orange-500 transition-colors pb-3 -mb-0.5 border-b-2 flex items-center gap-1.5 cursor-pointer whitespace-nowrap ${
                 activeTab === "images" ? "text-orange-500 border-orange-500 font-bold" : "border-transparent text-slate-500"
               }`}
             >
@@ -296,7 +343,7 @@ export default function Home() {
             </button>
             <button 
               onClick={() => handleTabClick("videos")}
-              className={`hover:text-orange-500 transition-colors pb-3 -mb-[2px] border-b-2 flex items-center gap-1.5 cursor-pointer whitespace-nowrap ${
+              className={`hover:text-orange-500 transition-colors pb-3 -mb-0.5 border-b-2 flex items-center gap-1.5 cursor-pointer whitespace-nowrap ${
                 activeTab === "videos" ? "text-orange-500 border-orange-500 font-bold" : "border-transparent text-slate-500"
               }`}
             >
@@ -304,7 +351,7 @@ export default function Home() {
             </button>
             <button 
               onClick={() => handleTabClick("news")}
-              className={`hover:text-orange-500 transition-colors pb-3 -mb-[2px] border-b-2 flex items-center gap-1.5 cursor-pointer whitespace-nowrap ${
+              className={`hover:text-orange-500 transition-colors pb-3 -mb-0.5 border-b-2 flex items-center gap-1.5 cursor-pointer whitespace-nowrap ${
                 activeTab === "news" ? "text-orange-500 border-orange-500 font-bold" : "border-transparent text-slate-500"
               }`}
             >
@@ -312,7 +359,7 @@ export default function Home() {
             </button>
             <button 
               onClick={() => handleTabClick("finance")}
-              className={`hover:text-orange-500 transition-colors pb-3 -mb-[2px] border-b-2 flex items-center gap-1.5 cursor-pointer whitespace-nowrap ${
+              className={`hover:text-orange-500 transition-colors pb-3 -mb-0.5 border-b-2 flex items-center gap-1.5 cursor-pointer whitespace-nowrap ${
                 activeTab === "finance" ? "text-orange-500 border-orange-500 font-bold" : "border-transparent text-slate-500"
               }`}
             >
@@ -324,7 +371,7 @@ export default function Home() {
         {hasSearched ? (
           <div className={`w-full max-w-3xl text-left mb-12 flex flex-col gap-6 transition-all duration-300 ${loading ? 'opacity-60 pointer-events-none' : 'opacity-100'}`}>
             {chatHistory.length > 0 && (
-              <div className="w-[calc(100%+2rem)] -mx-4 md:w-full md:mx-0 p-4 md:p-6 rounded-none md:rounded-3xl bg-gradient-to-br from-slate-50 to-blue-50 shadow-sm flex flex-col gap-4">
+              <div className="w-[calc(100%+2rem)] -mx-4 md:w-full md:mx-0 p-4 md:p-6 rounded-none md:rounded-3xl bg-linear-to-br from-slate-50 to-blue-50 shadow-sm flex flex-col gap-4">
                 <div className="flex items-center gap-2 pb-2 border-b border-slate-200/60">
                   <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#2563eb" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                     <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon>
@@ -335,7 +382,7 @@ export default function Home() {
                 </div>
  
                 {/* Chat Geschiedenis */}
-                <div ref={chatContainerRef} className="flex flex-col gap-4 max-h-[400px] overflow-y-auto pr-2">
+                <div ref={chatContainerRef} className="flex flex-col gap-4 max-h-100 overflow-y-auto pr-2">
                   {chatHistory.map((msg, index) => (
                     <div 
                       key={index} 
@@ -382,6 +429,7 @@ export default function Home() {
                   <form onSubmit={handleFollowUp} className="flex gap-2">
                     <input
                       type="text"
+                      maxLength={500}
                       value={followUpQuery}
                       onChange={(e) => setFollowUpQuery(e.target.value)}
                       placeholder="Stel een vervolgvraag of vraag om verduidelijking..."
@@ -392,7 +440,7 @@ export default function Home() {
                     <button
                       type="submit"
                       disabled={followUpLoading}
-                      className="bg-blue-600 text-white p-3 rounded-full hover:bg-blue-500 transition-colors shadow-sm disabled:bg-slate-400 flex items-center justify-center min-w-[42px] h-[42px]"
+                      className="bg-blue-600 text-white p-3 rounded-full hover:bg-blue-500 transition-colors shadow-sm disabled:bg-slate-400 flex items-center justify-center min-w-10.5 h-10.5"
                       title="Stuur"
                     >
                       {followUpLoading ? (
@@ -473,7 +521,7 @@ export default function Home() {
                     </button>
 
                     {/* Visuele Scheider */}
-                    <span className="h-4 w-[1px] bg-slate-200" />
+                    <span className="h-4 w-px bg-slate-200" />
 
                     {/* Duim Omhoog (Thumbs Up) */}
                     <button 
@@ -504,21 +552,31 @@ export default function Home() {
             {/* Tekstuele resultaten (Alle / Nieuws / Financieel) */}
             {(activeTab === "all" || activeTab === "news" || activeTab === "finance") && (
               <div className="flex flex-col gap-4">
-                {hits.map((hit, i) => (
-                  <article key={hit.id || i} className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 hover:shadow-md transition-shadow">
-                    <div className="text-xs text-slate-500 mb-2 font-medium">
-                      {[hit.source, hit.language, hit.country, hit.category].filter(Boolean).join(" · ")}
-                    </div>
-                    <h3 className="text-xl font-semibold mb-2">
-                      <a href={hit.url} target="_blank" rel="noopener noreferrer" className="text-blue-700 hover:underline">
-                        {hit.title || hit.url || "Ongetiteld resultaat"}
-                      </a>
-                    </h3>
-                    <p className="text-slate-600 text-sm leading-relaxed">
-                      {hit.summary || (hit.content ? hit.content.slice(0, 260) + "..." : "Geen snippet beschikbaar.")}
-                    </p>
-                  </article>
-                ))}
+                {hits.map((hit, i) => {
+                  const resultUrl = safeWebUrl(hit.url);
+                  let sourceHost = "Onbekende bron";
+                  if (resultUrl) sourceHost = new URL(resultUrl).hostname;
+                  return (
+                    <article key={hit.id || i} className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 hover:shadow-md transition-shadow">
+                      <div className="text-xs text-slate-500 mb-2 font-medium">
+                        {[sourceHost, hit.language, hit.country, hit.category].filter(Boolean).join(" · ")}
+                        {sourceHost.includes("xn--") && <span className="ml-2 text-amber-700">Domein bevat punycode</span>}
+                      </div>
+                      <h3 className="text-xl font-semibold mb-2">
+                        {resultUrl ? (
+                          <a href={resultUrl} target="_blank" rel="noopener noreferrer nofollow" referrerPolicy="no-referrer" className="text-blue-700 hover:underline">
+                            {hit.title || sourceHost}
+                          </a>
+                        ) : (
+                          <span className="text-slate-700">{hit.title || "Ongeldige resultaat-URL"}</span>
+                        )}
+                      </h3>
+                      <p className="text-slate-600 text-sm leading-relaxed">
+                        {hit.summary || (hit.content ? hit.content.slice(0, 260) + "..." : "Geen snippet beschikbaar.")}
+                      </p>
+                    </article>
+                  );
+                })}
               </div>
             )}
 
@@ -534,7 +592,8 @@ export default function Home() {
               return (
                 <div className="grid grid-cols-2 md:grid-cols-3 gap-4 w-full">
                   {hits.map((hit, i) => {
-                    const imgSrc = hit.image_url || `https://image.thum.io/get/width/400/crop/800/${encodeURIComponent(hit.url || '')}`;
+                    const imgSrc = safeImageUrl(hit.image_url) || fallbackImages[(3 + i) % fallbackImages.length];
+                    const resultUrl = safeWebUrl(hit.url);
 
                     return (
                       <div key={hit.id || i} className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden hover:shadow-md transition-all group flex flex-col">
@@ -546,14 +605,8 @@ export default function Home() {
                             sizes="(max-width: 768px) 50vw, 33vw"
                             unoptimized
                             loading="lazy"
+                            referrerPolicy="no-referrer"
                             onError={(e: React.SyntheticEvent<HTMLImageElement, Event>) => {
-                              const fallbackImages = [
-                                "https://images.unsplash.com/photo-1451187580459-43490279c0fa?w=500&auto=format&fit=crop&q=60", // Tech
-                                "https://images.unsplash.com/photo-1460925895917-afdab827c52f?w=500&auto=format&fit=crop&q=60", // Business/Finance
-                                "https://images.unsplash.com/photo-1504711434969-e33886168f5c?w=500&auto=format&fit=crop&q=60", // News
-                                "https://images.unsplash.com/photo-1507608869274-d3177c8bb4c7?w=500&auto=format&fit=crop&q=60", // Travel/Europe
-                                "https://images.unsplash.com/photo-1486406146926-c627a92ad1ab?w=500&auto=format&fit=crop&q=60", // Architecture/City
-                              ];
                               const text = ((hit.title || "") + " " + (hit.content || "")).toLowerCase();
                               let fallbackSrc = fallbackImages[(3 + i) % fallbackImages.length];
                               if (hit.category === "finance" || text.includes("geld") || text.includes("financieel") || text.includes("euro") || text.includes("business") || text.includes("bank")) {
@@ -572,14 +625,11 @@ export default function Home() {
                           <h4 className="text-xs font-semibold text-slate-700 line-clamp-2 mb-1">
                             {hit.title || "Naamloze afbeelding"}
                           </h4>
-                          <a 
-                            href={hit.url} 
-                            target="_blank" 
-                            rel="noopener noreferrer" 
-                            className="text-[10px] text-blue-600 hover:underline truncate block"
-                          >
-                            {hit.source || hit.url}
-                          </a>
+                          {resultUrl && (
+                            <a href={resultUrl} target="_blank" rel="noopener noreferrer nofollow" referrerPolicy="no-referrer" className="text-[10px] text-blue-600 hover:underline truncate block">
+                              {new URL(resultUrl).hostname}
+                            </a>
+                          )}
                         </div>
                       </div>
                     );
@@ -600,22 +650,22 @@ export default function Home() {
               return (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 w-full">
                   {hits.map((hit, i) => {
-                    const isYoutube = hit.video_url?.includes("youtube.com") || hit.video_url?.includes("youtu.be");
-                    let embedUrl = hit.video_url || "";
-                    if (isYoutube && embedUrl.includes("watch?v=")) {
-                      embedUrl = embedUrl.replace("watch?v=", "embed/");
-                    }
-
-                    const thumbSrc = hit.image_url || `https://image.thum.io/get/width/400/crop/800/${encodeURIComponent(hit.url || '')}`;
+                    const embedUrl = youtubeEmbedUrl(hit.video_url);
+                    const thumbSrc = safeImageUrl(hit.image_url) || fallbackImages[i % fallbackImages.length];
+                    const videoTarget = safeWebUrl(hit.video_url) || safeWebUrl(hit.url);
+                    const pageTarget = safeWebUrl(hit.url);
 
                     return (
                       <div key={hit.id || i} className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden hover:shadow-md transition-shadow flex flex-col">
                         <div className="aspect-video w-full bg-slate-900 relative">
-                          {isYoutube && embedUrl ? (
+                          {embedUrl ? (
                             <iframe 
                               src={embedUrl}
                               className="w-full h-full border-0"
-                              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                              title={hit.title || "YouTube-video"}
+                              sandbox="allow-scripts allow-presentation"
+                              referrerPolicy="strict-origin-when-cross-origin"
+                              allow="encrypted-media; picture-in-picture"
                               allowFullScreen
                             />
                           ) : (
@@ -626,6 +676,7 @@ export default function Home() {
                                 fill
                                 unoptimized
                                 loading="lazy"
+                                referrerPolicy="no-referrer"
                                 onError={(e: React.SyntheticEvent<HTMLImageElement, Event>) => {
                                   const fallbackVideoThumbnails = [
                                     "https://images.unsplash.com/photo-1536240478700-b869070f9279?w=600&auto=format&fit=crop&q=60", // Camera/Video production
@@ -637,16 +688,11 @@ export default function Home() {
                                 }}
                               />
                               <div className="absolute inset-0 bg-black/30 flex items-center justify-center">
-                                <a 
-                                  href={hit.video_url || hit.url} 
-                                  target="_blank" 
-                                  rel="noopener noreferrer" 
-                                  className="w-14 h-14 bg-orange-500 text-white rounded-full flex items-center justify-center shadow-lg hover:bg-orange-600 transition-all transform hover:scale-110 cursor-pointer"
-                                >
+                                {videoTarget ? <a href={videoTarget} target="_blank" rel="noopener noreferrer nofollow" referrerPolicy="no-referrer" className="w-14 h-14 bg-orange-500 text-white rounded-full flex items-center justify-center shadow-lg hover:bg-orange-600 transition-all transform hover:scale-110 cursor-pointer">
                                   <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" className="ml-0.5">
                                     <polygon points="5 3 19 12 5 21 5 3"></polygon>
                                   </svg>
-                                </a>
+                                </a> : <span className="text-white text-xs">Video-URL ongeldig</span>}
                               </div>
                             </div>
                           )}
@@ -660,14 +706,7 @@ export default function Home() {
                               {hit.title}
                             </h4>
                           </div>
-                          <a 
-                            href={hit.url} 
-                            target="_blank" 
-                            rel="noopener noreferrer" 
-                            className="text-xs text-blue-600 hover:underline mt-2 block"
-                          >
-                            Bronpagina openen
-                          </a>
+                          {pageTarget && <a href={pageTarget} target="_blank" rel="noopener noreferrer nofollow" referrerPolicy="no-referrer" className="text-xs text-blue-600 hover:underline mt-2 block">Bronpagina openen</a>}
                         </div>
                       </div>
                     );
@@ -681,7 +720,7 @@ export default function Home() {
           <div className="w-full max-w-3xl mb-12 text-left flex flex-col gap-8">
             {/* Card 1: Privacy */}
             <div className="bg-white/70 backdrop-blur-sm p-6 md:p-8 rounded-3xl shadow-[0_4px_20px_rgb(0,0,0,0.02)] border border-slate-200/60 hover:-translate-y-1 hover:shadow-[0_12px_30px_rgb(0,0,0,0.06)] hover:border-slate-350 hover:bg-white transition-all duration-300 flex gap-4">
-              <div className="flex-shrink-0 w-12 h-12 bg-orange-50 rounded-2xl flex items-center justify-center text-orange-500 border border-orange-100">
+              <div className="shrink-0 w-12 h-12 bg-orange-50 rounded-2xl flex items-center justify-center text-orange-500 border border-orange-100">
                 <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
                   <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
                   <path d="m9 11 2 2 4-4" />
@@ -696,7 +735,7 @@ export default function Home() {
             {/* Card 2: Meld je site aan */}
             <div className="bg-white/70 backdrop-blur-sm p-6 md:p-8 rounded-3xl shadow-[0_4px_20px_rgb(0,0,0,0.02)] border border-slate-200/60 hover:-translate-y-1 hover:shadow-[0_12px_30px_rgb(0,0,0,0.06)] hover:border-slate-350 hover:bg-white transition-all duration-300 flex flex-col gap-4">
               <div className="flex items-center gap-4">
-                <div className="flex-shrink-0 w-12 h-12 bg-blue-50 rounded-2xl flex items-center justify-center text-blue-500 border border-blue-100">
+                <div className="shrink-0 w-12 h-12 bg-blue-50 rounded-2xl flex items-center justify-center text-blue-500 border border-blue-100">
                 <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
                     <path d="M10 14a3.5 3.5 0 0 0 5 0l4 -4a3.5 3.5 0 0 0 -5 -5l-4 4" />
                     <path d="M14 10a3.5 3.5 0 0 0 -5 0l-4 4a3.5 3.5 0 0 0 5 5l4 -4" />
@@ -711,6 +750,7 @@ export default function Home() {
               <form onSubmit={handleSiteSubmit} className="flex flex-col sm:flex-row gap-3 mt-2">
                 <input
                   type="url"
+                  maxLength={2048}
                   value={submitUrl}
                   onChange={(e) => setSubmitUrl(e.target.value)}
                   placeholder="https://www.jouwwebsite.eu"
@@ -737,7 +777,7 @@ export default function Home() {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               {/* Website Generator (tijdelijk uitgeschakeld) */}
               <div className="bg-white/70 backdrop-blur-sm p-6 rounded-3xl shadow-[0_4px_20px_rgb(0,0,0,0.02)] border border-slate-200/60 transition-all duration-300 flex gap-4 opacity-50 cursor-not-allowed">
-                <div className="flex-shrink-0 w-12 h-12 bg-amber-50 rounded-2xl flex items-center justify-center text-amber-500 border border-amber-100">
+                <div className="shrink-0 w-12 h-12 bg-amber-50 rounded-2xl flex items-center justify-center text-amber-500 border border-amber-100">
                   <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
                     <rect width="18" height="18" x="3" y="3" rx="2" />
                     <path d="M3 9h18" /><path d="M9 21V9" />
@@ -750,7 +790,7 @@ export default function Home() {
               </div>
               {/* Onafhankelijk */}
               <div className="bg-white/70 backdrop-blur-sm p-6 rounded-3xl shadow-[0_4px_20px_rgb(0,0,0,0.02)] border border-slate-200/60 hover:-translate-y-1 hover:shadow-[0_12px_30px_rgb(0,0,0,0.06)] hover:border-slate-350 hover:bg-white transition-all duration-300 flex gap-4">
-                <div className="flex-shrink-0 w-12 h-12 bg-indigo-50 rounded-2xl flex items-center justify-center text-indigo-500 border border-indigo-100">
+                <div className="shrink-0 w-12 h-12 bg-indigo-50 rounded-2xl flex items-center justify-center text-indigo-500 border border-indigo-100">
                   <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
                     <circle cx="12" cy="12" r="10" /><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20" /><path d="M2 12h20" />
                   </svg>
@@ -776,6 +816,22 @@ export default function Home() {
             Website Generator
           </span>
         </div>
+
+        <section
+          aria-label="PSA"
+          className="mt-8 rounded-2xl border border-slate-200/70 bg-white/70 p-3 shadow-sm"
+        >
+          <iframe
+            src="https://psa.fajaede.nl/embed/psa?id=PSA-4GRPTX"
+            width="140"
+            height="140"
+            frameBorder="0"
+            scrolling="no"
+            title="Fajaede PSA"
+            loading="lazy"
+            className="block overflow-hidden border-0"
+          />
+        </section>
       </div>
     </main>
   );

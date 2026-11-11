@@ -1,7 +1,7 @@
 // app/builder/page.tsx
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
 
 type SiteBrief = {
@@ -17,25 +17,146 @@ type BuilderResponse = {
   validation_report: Record<string, unknown>;
 };
 
+type BuilderAccount = {
+  authenticated: boolean;
+  email?: string;
+  free_available: boolean;
+  credits: number;
+  checkout_available: boolean;
+  checkout_message: string;
+};
+
 export default function BuilderPage() {
   const [siteType, setSiteType] = useState('general_business');
   const [industry, setIndustry] = useState('');
   const [style, setStyle] = useState('');
   const [description, setDescription] = useState('');
+  const [email, setEmail] = useState('');
+  const [verificationToken, setVerificationToken] = useState('');
+  const [account, setAccount] = useState<BuilderAccount | null>(null);
+  const [accountMessage, setAccountMessage] = useState('');
+  const [accountError, setAccountError] = useState<string | null>(null);
+  const [checkoutLoading, setCheckoutLoading] = useState(false);
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<BuilderResponse | null>(null);
   const [viewMode, setViewMode] = useState<'preview' | 'html' | 'brief'>('preview');
 
-  async function handleSubmit(e: React.FormEvent, endpoint: '/api/builder/generate' | '/api/builder/generate-medium') {
+  async function refreshAccount(): Promise<BuilderAccount> {
+    const response = await fetch('/api/builder/account', { cache: 'no-store' });
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data.detail || 'Kon accountstatus niet ophalen.');
+    }
+    setAccount(data as BuilderAccount);
+    return data as BuilderAccount;
+  }
+
+  useEffect(() => {
+    const loadPageState = async () => {
+      try {
+        const params = new URLSearchParams(window.location.search);
+        const token = params.get('verify');
+        if (token) {
+          setVerificationToken(token);
+        }
+
+        const currentAccount = await refreshAccount();
+        if (params.get('payment') === 'return') {
+          window.history.replaceState({}, '', '/builder');
+          let updatedAccount = currentAccount;
+          for (let attempt = 0; attempt < 5; attempt += 1) {
+            if (updatedAccount.credits > currentAccount.credits) break;
+            await new Promise((resolve) => setTimeout(resolve, 1500));
+            updatedAccount = await refreshAccount();
+          }
+          setAccountMessage('Betaling gecontroleerd. Je credits zijn bijgewerkt als de betaling is geslaagd.');
+        }
+      } catch (loadError) {
+        setAccountError(loadError instanceof Error ? loadError.message : 'Kon accountstatus niet ophalen.');
+      }
+    };
+
+    void loadPageState();
+  }, []);
+
+  async function handleEmailVerification() {
+    setAccountError(null);
+    try {
+      const response = await fetch('/api/builder/auth/verify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: verificationToken }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.detail || 'De verificatielink is ongeldig of verlopen.');
+      }
+      setVerificationToken('');
+      window.history.replaceState({}, '', '/builder');
+      setAccountMessage(data.message);
+      await refreshAccount();
+    } catch (verificationError) {
+      setAccountError(verificationError instanceof Error ? verificationError.message : 'E-mailadres bevestigen is mislukt.');
+    }
+  }
+
+  async function handleVerificationRequest(e: React.FormEvent) {
     e.preventDefault();
+    setAccountError(null);
+    setAccountMessage('');
+    try {
+      const response = await fetch('/api/builder/auth/request-verification', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.detail || 'De verificatiemail kon niet worden verzonden.');
+      }
+      setAccountMessage(data.message);
+    } catch (requestError) {
+      setAccountError(requestError instanceof Error ? requestError.message : 'Er ging iets mis.');
+    }
+  }
+
+  async function handleCheckout() {
+    setCheckoutLoading(true);
+    setAccountError(null);
+    try {
+      const response = await fetch('/api/builder/checkout', { method: 'POST' });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.detail || 'De betaling kon niet worden gestart.');
+      }
+      window.location.assign(data.checkout_url);
+    } catch (checkoutError) {
+      setAccountError(checkoutError instanceof Error ? checkoutError.message : 'De betaling kon niet worden gestart.');
+    } finally {
+      setCheckoutLoading(false);
+    }
+  }
+
+  async function handleLogout() {
+    await fetch('/api/builder/auth/logout', { method: 'POST' });
+    setAccount((current) => current ? { ...current, authenticated: false, email: undefined, credits: 0, free_available: false } : current);
+    setAccountMessage('Je bent afgemeld.');
+  }
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!account?.authenticated) {
+      setError('Bevestig eerst je e-mailadres om te genereren.');
+      return;
+    }
     setLoading(true);
     setError(null);
 
     try {
       // Gebruik een relatief pad. De `rewrites` in next.config.js handelen de proxy naar de backend af.
-      const res = await fetch(endpoint, {
+      const res = await fetch('/api/builder/generate', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -64,21 +185,7 @@ export default function BuilderPage() {
       }
 
       setResult(data as BuilderResponse);
-
-      // === NIEUWE INTEGRATIESTAP ===
-      // Als er een URL is in de site_content, start dan automatisch een crawl-taak.
-      // We gaan ervan uit dat de backend een 'url' veld teruggeeft.
-      const siteUrl = (data.site_content as { url?: string })?.url;
-      if (siteUrl) {
-        console.log(`Nieuwe site gegenereerd, crawl starten voor: ${siteUrl}`);
-        // Stuur een verzoek naar de crawl-endpoint zonder te wachten op het resultaat.
-        fetch('/api/crawl', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ url: siteUrl }),
-        }).catch(crawlError => console.error("Kon de automatische crawl-taak niet starten:", crawlError));
-      }
-      // === EINDE INTEGRATIESTAP ===
+      await refreshAccount();
     } catch (err: unknown) {
       if (err instanceof Error) {
         setError(err.message);
@@ -94,9 +201,9 @@ export default function BuilderPage() {
   return (
     <div className="relative min-h-screen bg-slate-50 px-4 py-8 md:py-12 overflow-hidden flex flex-col justify-between">
       {/* Ambient background glows */}
-      <div className="absolute inset-0 -z-10 h-full w-full bg-[radial-gradient(#e2e8f0_1px,transparent_1px)] [background-size:20px_20px] opacity-70"></div>
-      <div className="absolute top-[-10%] left-[-10%] h-[600px] w-[600px] rounded-full bg-orange-100/40 blur-[100px] -z-10"></div>
-      <div className="absolute bottom-[-10%] right-[-10%] h-[600px] w-[600px] rounded-full bg-blue-100/30 blur-[120px] -z-10"></div>
+      <div className="absolute inset-0 -z-10 h-full w-full bg-[radial-gradient(#e2e8f0_1px,transparent_1px)] bg-size-[20px_20px] opacity-70"></div>
+      <div className="absolute top-[-10%] left-[-10%] h-150 w-150 rounded-full bg-orange-100/40 blur-[100px] -z-10"></div>
+      <div className="absolute bottom-[-10%] right-[-10%] h-150 w-150 rounded-full bg-blue-100/30 blur-[120px] -z-10"></div>
 
       <div className="w-full max-w-7xl mx-auto flex-1 flex flex-col relative z-10">
         {/* Navigation & Header */}
@@ -110,7 +217,7 @@ export default function BuilderPage() {
           <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
             <div>
               <h1 className="text-4xl md:text-5xl font-black text-slate-900 tracking-tight mb-2">
-                fajaede<span className="bg-gradient-to-r from-orange-500 to-amber-500 bg-clip-text text-transparent">Builder</span>
+              fajaede<span className="bg-linear-to-r from-orange-500 to-amber-500 bg-clip-text text-transparent">Builder</span>
               </h1>
               <p className="text-slate-600 max-w-2xl text-sm md:text-base leading-relaxed">
                 Ontwerp direct complete, professionele HTML-websites op basis van een korte beschrijving met behulp van kunstmatige intelligentie.
@@ -136,6 +243,101 @@ export default function BuilderPage() {
           </div>
         </header>
 
+        <section className="mb-8 grid gap-6 rounded-3xl border border-slate-200 bg-white/90 p-6 shadow-sm md:grid-cols-[1fr_auto] md:items-center md:p-8">
+          <div>
+            <p className="mb-2 text-xs font-bold uppercase tracking-[0.18em] text-orange-600">
+              Simpel en transparant
+            </p>
+            <h2 className="text-2xl font-bold text-slate-900">Eén website gratis proberen</h2>
+            <p className="mt-2 max-w-2xl text-sm leading-relaxed text-slate-600">
+              Na je gratis aanvraag betaal je €0,50 per generatie. Laad 10 credits op voor €5,00,
+              inclusief btw. Eenmalige betaling, geen abonnement.
+            </p>
+          </div>
+          <div className="rounded-2xl bg-slate-50 p-5 text-center md:min-w-56">
+            <p className="text-sm font-semibold text-slate-500">Creditpakket</p>
+            <p className="mt-1 text-3xl font-black text-slate-900">€5,00</p>
+            <p className="text-sm text-slate-600">10 aanvragen · €0,50 per stuk</p>
+            <p className="mt-1 text-xs text-slate-500">Inclusief btw</p>
+          </div>
+
+          <div className="md:col-span-2 border-t border-slate-200 pt-5">
+            {account?.authenticated ? (
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <p className="text-sm font-semibold text-slate-800">{account.email}</p>
+                  <p className="mt-1 text-sm text-slate-600">
+                    {account.free_available
+                      ? 'Je gratis aanvraag staat klaar.'
+                      : `${account.credits} ${account.credits === 1 ? 'credit' : 'credits'} beschikbaar.`}
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-3">
+                  <button
+                    type="button"
+                    onClick={handleCheckout}
+                    disabled={!account.checkout_available || checkoutLoading}
+                    className="rounded-full bg-slate-900 px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-slate-700 disabled:cursor-not-allowed disabled:bg-slate-300"
+                  >
+                    {checkoutLoading ? 'Bezig met openen…' : 'Koop 10 credits · €5,00'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleLogout}
+                    className="rounded-full border border-slate-300 px-5 py-2.5 text-sm font-semibold text-slate-600 transition-colors hover:bg-slate-50"
+                  >
+                    Afmelden
+                  </button>
+                </div>
+              </div>
+            ) : verificationToken ? (
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <p className="text-sm text-slate-700">Bevestig dat jij dit e-mailadres hebt aangevraagd.</p>
+                <button
+                  type="button"
+                  onClick={handleEmailVerification}
+                  className="rounded-full bg-orange-500 px-5 py-3 text-sm font-semibold text-white transition-colors hover:bg-orange-600"
+                >
+                  Bevestig e-mailadres
+                </button>
+              </div>
+            ) : (
+              <form onSubmit={handleVerificationRequest} className="grid gap-3 sm:grid-cols-[1fr_auto]">
+                <div>
+                  <label htmlFor="builder-email" className="mb-1.5 block text-sm font-semibold text-slate-700">
+                    Bevestig je e-mailadres voor je gratis aanvraag
+                  </label>
+                  <input
+                    id="builder-email"
+                    type="email"
+                    autoComplete="email"
+                    maxLength={254}
+                    required
+                    value={email}
+                    onChange={(event) => setEmail(event.target.value)}
+                    placeholder="jij@voorbeeld.nl"
+                    className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-800 outline-none transition focus:border-orange-500 focus:ring-2 focus:ring-orange-100"
+                  />
+                </div>
+                <button
+                  type="submit"
+                  className="self-end rounded-full bg-orange-500 px-5 py-3 text-sm font-semibold text-white transition-colors hover:bg-orange-600"
+                >
+                  Stuur verificatielink
+                </button>
+              </form>
+            )}
+            {accountMessage && <p role="status" className="mt-3 text-sm text-emerald-700">{accountMessage}</p>}
+            {accountError && <p role="alert" className="mt-3 text-sm text-red-700">{accountError}</p>}
+            {account?.authenticated && !account.checkout_available && (
+              <p className="mt-3 text-xs text-amber-700">{account.checkout_message}</p>
+            )}
+            <p className="mt-3 text-xs leading-relaxed text-slate-500">
+              Je aanvraag start pas na e-mailbevestiging. Credits worden alleen afgeschreven als de website succesvol is gegenereerd.
+            </p>
+          </div>
+        </section>
+
         {/* Main Dashboard Layout */}
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start flex-1 w-full">
           
@@ -149,7 +351,7 @@ export default function BuilderPage() {
               Website Details
             </h2>
 
-            <form onSubmit={(e) => handleSubmit(e, '/api/builder/generate')} className="flex flex-col gap-5">
+            <form onSubmit={handleSubmit} className="flex flex-col gap-5">
               {/* Site Type */}
               <div className="flex flex-col">
                 <label htmlFor="siteType" className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">
@@ -225,7 +427,7 @@ export default function BuilderPage() {
               {/* Error Alert */}
               {error && (
                 <div className="p-4 bg-red-50 border border-red-100 rounded-2xl text-xs text-red-600 flex items-start gap-2.5 leading-relaxed">
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="flex-shrink-0 mt-0.5">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="shrink-0 mt-0.5">
                     <circle cx="12" cy="12" r="10" />
                     <line x1="12" x2="12" y1="8" y2="12" />
                     <line x1="12" x2="12.01" y1="16" y2="16" />
@@ -238,8 +440,8 @@ export default function BuilderPage() {
               <div className="flex flex-col gap-3 mt-2">
                 <button
                   type="submit"
-                  disabled={loading}
-                  className="w-full bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 text-white font-bold py-3.5 px-6 rounded-full shadow-md hover:shadow-lg disabled:from-slate-400 disabled:to-slate-400 transition-all flex items-center justify-center gap-2 cursor-pointer text-sm md:text-base"
+                  disabled={loading || !account?.authenticated || (!account.free_available && account.credits < 1)}
+                  className="w-full bg-linear-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 text-white font-bold py-3.5 px-6 rounded-full shadow-md hover:shadow-lg disabled:from-slate-400 disabled:to-slate-400 transition-all flex items-center justify-center gap-2 cursor-pointer text-sm md:text-base"
                 >
                   {loading ? (
                     <>
@@ -256,18 +458,17 @@ export default function BuilderPage() {
                         <path d="m8 11 4 4 4-4" />
                         <path d="M8 5H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-4" />
                       </svg>
-                      Genereer Volledige Website (AI HTML)
+                      {!account?.authenticated
+                        ? 'Bevestig je e-mailadres om te starten'
+                        : account.free_available
+                          ? 'Genereer je gratis website'
+                          : 'Genereer website · 1 credit (€0,50)'}
                     </>
                   )}
                 </button>
-                <button
-                  type="button"
-                  onClick={(e) => handleSubmit(e, '/api/builder/generate')}
-                  disabled={loading}
-                  className="w-full bg-slate-700 hover:bg-slate-600 text-white font-bold py-2.5 px-6 rounded-full shadow-sm disabled:bg-slate-400 transition-all flex items-center justify-center gap-2 cursor-pointer text-xs"
-                >
-                  Snel genereren (Template-based)
-                </button>
+                <p className="text-center text-xs leading-relaxed text-slate-500">
+                  Je tegoed wordt pas afgeschreven als de generatie slaagt. Je kunt de HTML daarna bekijken en kopiëren.
+                </p>
               </div>
             </form>
           </div>
@@ -319,11 +520,11 @@ export default function BuilderPage() {
             </div>
 
             {/* Browser Preview Window */}
-            <div className="w-full bg-slate-900 border border-slate-200/80 rounded-2xl overflow-hidden shadow-lg flex flex-col h-[75vh] min-h-[600px]">
+            <div className="w-full bg-slate-900 border border-slate-200/80 rounded-2xl overflow-hidden shadow-lg flex flex-col h-[75vh] min-h-150">
               {/* Browser Header Bar */}
-              <div className="bg-slate-100 border-b border-slate-200 px-4 py-3 flex items-center gap-4 flex-shrink-0">
+              <div className="bg-slate-100 border-b border-slate-200 px-4 py-3 flex items-center gap-4 shrink-0">
                 {/* Traffic lights dots */}
-                <div className="flex gap-1.5 flex-shrink-0">
+                <div className="flex gap-1.5 shrink-0">
                   <span className="w-3 h-3 rounded-full bg-rose-400"></span>
                   <span className="w-3 h-3 rounded-full bg-amber-400"></span>
                   <span className="w-3 h-3 rounded-full bg-emerald-400"></span>
@@ -359,7 +560,7 @@ export default function BuilderPage() {
                       <iframe
                         title="Website preview"
                         srcDoc={result.html}
-                        sandbox="allow-scripts allow-forms allow-popups allow-modals"
+                        sandbox=""
                         className="w-full h-full border-none bg-white"
                       />
                     )}

@@ -1,6 +1,9 @@
 import unittest
+from unittest.mock import AsyncMock, patch
 
-from backend.seo_geo_audit import audit_seo_geo, _resolve_public_url
+import httpx
+
+from backend.seo_geo_audit import audit_seo_geo, _resolve_public_url, fetch_public_resource
 
 
 class SeoGeoAuditTests(unittest.TestCase):
@@ -110,12 +113,57 @@ class SeoGeoAuditTests(unittest.TestCase):
             "ftp://example.com/",
             "http://localhost/",
             "http://127.0.0.1/",
+            "http://127.1/",
+            "http://169.254.169.254/",
+            "http://100.64.0.1/",
+            "http://[::ffff:127.0.0.1]/",
             "http://192.168.1.1/",
             "http://user:password@example.com/",
             "http://example.com:8080/",
         ):
             with self.subTest(url=url), self.assertRaises(ValueError):
                 _resolve_public_url(url)
+
+
+class PublicFetchSecurityTests(unittest.IsolatedAsyncioTestCase):
+    async def test_redirect_to_private_address_is_rejected_before_second_request(self):
+        requests = []
+
+        async def handler(request):
+            requests.append(str(request.url))
+            return httpx.Response(302, headers={"location": "http://127.0.0.1/admin"})
+
+        async def validate_url(value):
+            if "127.0.0.1" in value:
+                raise ValueError("Private and local addresses cannot be audited.")
+            return value
+
+        original_client = httpx.AsyncClient
+
+        def create_mock_client(**kwargs):
+            kwargs["transport"] = httpx.MockTransport(handler)
+            return original_client(**kwargs)
+
+        with patch("backend.seo_geo_audit.validate_public_url", new=AsyncMock(side_effect=validate_url)), \
+             patch("backend.seo_geo_audit.httpx.AsyncClient", side_effect=create_mock_client):
+            with self.assertRaisesRegex(ValueError, "Private and local"):
+                await fetch_public_resource("https://example.com/")
+
+        self.assertEqual(requests, ["https://example.com/"])
+
+    async def test_download_size_is_bounded_even_without_content_length(self):
+        original_client = httpx.AsyncClient
+
+        def create_mock_client(**kwargs):
+            kwargs["transport"] = httpx.MockTransport(
+                lambda request: httpx.Response(200, content=b"x" * 32)
+            )
+            return original_client(**kwargs)
+
+        with patch("backend.seo_geo_audit.validate_public_url", new=AsyncMock(side_effect=lambda value: value)), \
+             patch("backend.seo_geo_audit.httpx.AsyncClient", side_effect=create_mock_client):
+            with self.assertRaisesRegex(ValueError, "size limit"):
+                await fetch_public_resource("https://example.com/", max_bytes=8)
 
 
 if __name__ == "__main__":

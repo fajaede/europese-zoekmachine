@@ -19,7 +19,7 @@ export default function PrivacyPolicy() {
         Privacybeleid voor fajaede.eu
       </h1>
       <p style={{ color: "#64748b", marginTop: 0 }}>
-        <strong>Laatst bijgewerkt:</strong> 17 juni 2026
+        <strong>Laatst bijgewerkt:</strong> 5 november 2026
       </p>
 
       <h2 style={{ fontSize: 24, marginTop: 40, color: "#1e293b", borderBottom: '1px solid #e2e8f0', paddingBottom: '8px' }}>1. Wie zijn wij?</h2>
@@ -60,6 +60,13 @@ export default function PrivacyPolicy() {
           bijhouden, die uw IP-adres, browsertype en het tijdstip van uw
           zoekopdracht kunnen bevatten. Deze gegevens worden gebruikt voor
           beveiliging en het opsporen van fouten.
+        </li>
+        <li>
+          <strong>Website Builder-account:</strong> Als u de Builder gebruikt,
+          verwerken wij uw e-mailadres, verificatie- en sessiegegevens, uw
+          creditsaldo en gegevens over aanvragen en betalingen. De Builder
+          gebruikt een noodzakelijke, HttpOnly-sessiecookie. Wij bewaren geen
+          kaart- of bankgegevens.
         </li>
       </ul>
 
@@ -131,6 +138,16 @@ export default function PrivacyPolicy() {
         OpenAI-verzoeken worden niet uitsluitend binnen de EER verwerkt, tenzij
         een regionale verwerkingsconfiguratie daadwerkelijk is ingeschakeld.
         <br /><br />
+        Als u de Website Builder gebruikt, sturen wij de door u opgegeven
+        bedrijfsgegevens naar OpenAI om de HTML-website te genereren. De
+        gegenereerde HTML wordt niet door ons account opgeslagen. Mollie
+        verwerkt de betaling voor creditpakketten; de betaling wordt op onze
+        server gecontroleerd voordat credits worden toegevoegd. Mollie verwerkt
+        betaalgegevens volgens zijn eigen privacybeleid. Wij ontvangen geen
+        kaart- of bankrekeningnummers. De verwerking van account- en
+        betaalgegevens is nodig om de Builder, credits en betaling te leveren
+        en om aan toepasselijke wettelijke verplichtingen te voldoen.
+        <br /><br />
         De Ollama-fallback wordt op onze eigen server verwerkt met het lokale
         model phi3:mini; deze fallback-aanvraag wordt niet naar Ollama Cloud
         gestuurd. Wij bewaren prompts en antwoorden op onze server niet langer
@@ -141,10 +158,11 @@ export default function PrivacyPolicy() {
       <h2 style={{ fontSize: 24, marginTop: 40, color: "#1e293b", borderBottom: '1px solid #e2e8f0', paddingBottom: '8px' }}>5. Uw rechten</h2>
       <p>
         Onder de AVG heeft u recht op inzage, rectificatie, verwijdering en
-        beperking van de verwerking van uw persoonsgegevens. Omdat wij uw
-        zoekopdrachten anoniem verwerken, is het uitoefenen van deze rechten op
-        specifieke zoekdata niet direct mogelijk. Voor vragen over onze
-        serverlogs kunt u contact met ons opnemen.
+        beperking van de verwerking van uw persoonsgegevens. Zoekopdrachten
+        worden anoniem verwerkt; voor Builder-account- en betaalgegevens kunt u
+        deze rechten uitoefenen door contact met ons op te nemen. Wij kunnen
+        gegevens bewaren wanneer dat nodig is om aan wettelijke verplichtingen
+        te voldoen.
       </p>
 
       <h2 style={{ fontSize: 24, marginTop: 40, color: "#1e293b", borderBottom: '1px solid #e2e8f0', paddingBottom: '8px' }}>6. Contact</h2>

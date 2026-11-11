@@ -226,7 +226,7 @@
                     <label for="project">Project naam (optioneel)</label>
                     <input type="text" id="project" placeholder="Mijn Project" />
                 </div>
-                <button class="btn" onclick="register()">Registreer & Krijg API Key</button>
+                <button class="btn" onclick="register()">Registreer per e-mail</button>
                 <div id="registerResult"></div>
             </div>
             
@@ -311,8 +311,7 @@
         
         const INTEGRATION_SCRIPT = `(function() {
   const SEO_CONFIG = {
-    API_KEY: 'PLAK_HIER_JOUW_API_KEY',
-    API_URL: 'https://api.fajaede.eu/api/developers/seo/generate',
+    API_URL: '/api/seo/generate', // Same-origin proxy; keep the API key on your server.
     pages: {
       '/': "Jouw homepage content hier...",
       '/pagina2': "Content voor pagina 2..."
@@ -328,7 +327,6 @@
       const response = await fetch(SEO_CONFIG.API_URL, {
         method: 'POST',
         headers: {
-          'X-API-Key': SEO_CONFIG.API_KEY,
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
@@ -367,6 +365,56 @@
 })();`;
         
         document.getElementById('codeBox').textContent = '<script>\n' + INTEGRATION_SCRIPT + '\n<\/script>';
+
+        function renderNotice(container, message, variant = 'error') {
+            const box = document.createElement('div');
+            box.className = `result-box ${variant}`;
+            box.textContent = String(message ?? 'Onbekende fout');
+            container.replaceChildren(box);
+        }
+
+        function appendTextField(parent, label, value) {
+            const paragraph = document.createElement('p');
+            paragraph.style.marginTop = '12px';
+            const title = document.createElement('strong');
+            title.textContent = `${label}:`;
+            paragraph.append(title, document.createElement('br'), document.createTextNode(String(value ?? '')));
+            parent.appendChild(paragraph);
+        }
+
+        function renderSeoResult(container, data) {
+            const box = document.createElement('div');
+            box.className = 'result-box success';
+            const heading = document.createElement('strong');
+            heading.textContent = `SEO Gegenereerd (Score: ${Number(data.score) || 0}/100)`;
+            box.appendChild(heading);
+            appendTextField(box, 'Title', data.title);
+            appendTextField(box, 'Meta Description', data.meta_description);
+            appendTextField(box, 'Keywords', Array.isArray(data.keywords) ? data.keywords.join(', ') : '');
+            container.replaceChildren(box);
+        }
+
+        function renderUsage(container, data) {
+            const grid = document.createElement('div');
+            grid.className = 'stats-grid';
+            const values = [
+                [data.requests_today, 'Requests Vandaag'],
+                [data.daily_limit, 'Daily Limit'],
+                [data.total_requests, 'Totaal Requests'],
+                [data.created_at, 'Geregistreerd'],
+            ];
+            for (const [value, label] of values) {
+                const card = document.createElement('div');
+                card.className = 'stat-card';
+                const heading = document.createElement('h3');
+                heading.textContent = String(value ?? '—');
+                const caption = document.createElement('p');
+                caption.textContent = label;
+                card.append(heading, caption);
+                grid.appendChild(card);
+            }
+            container.replaceChildren(grid);
+        }
         
         async function register() {
             const email = document.getElementById('email').value.trim();
@@ -374,7 +422,7 @@
             const resultDiv = document.getElementById('registerResult');
             
             if (!email) {
-                resultDiv.innerHTML = '<div class="result-box error">❌ Vul een email adres in</div>';
+                renderNotice(resultDiv, 'Vul een e-mailadres in.');
                 return;
             }
             
@@ -387,14 +435,12 @@
                 const data = await response.json();
                 
                 if (response.ok) {
-                    resultDiv.innerHTML = '<div class="result-box success">✅ ' + data.message + '<div class="api-key-display">🔑 ' + data.api_key + '</div><p style="margin-top:12px;font-size:13px;color:#666;">Bewaar deze key goed!</p></div>';
-                    document.getElementById('apiKey').value = data.api_key;
-                    document.getElementById('apiKeyStats').value = data.api_key;
+                    renderNotice(resultDiv, data.message || 'Controleer je e-mail om de registratie te bevestigen.', 'success');
                 } else {
-                    resultDiv.innerHTML = '<div class="result-box error">❌ ' + (data.detail || 'Fout bij registratie') + '</div>';
+                    renderNotice(resultDiv, data.detail || 'Fout bij registratie.');
                 }
             } catch (error) {
-                resultDiv.innerHTML = '<div class="result-box error">❌ ' + error.message + '</div>';
+                renderNotice(resultDiv, error.message || 'Registratie mislukt.');
             }
         }
         
@@ -406,11 +452,11 @@
             const resultDiv = document.getElementById('seoResult');
             
             if (!apiKey || !content) {
-                resultDiv.innerHTML = '<div class="result-box error">❌ Vul API key en content in</div>';
+                renderNotice(resultDiv, 'Vul API-key en content in.');
                 return;
             }
             
-            resultDiv.innerHTML = '<div class="result-box">⏳ Genereren...</div>';
+            renderNotice(resultDiv, 'Genereren...', '');
             
             try {
                 const response = await fetch(API_BASE + '/seo/generate', {
@@ -421,12 +467,12 @@
                 const data = await response.json();
                 
                 if (response.ok) {
-                    resultDiv.innerHTML = '<div class="result-box success"><strong>✅ SEO Gegenereerd (Score: ' + data.score + '/100)</strong><p style="margin-top:16px;"><strong>Title:</strong><br>' + data.title + '</p><p style="margin-top:12px;"><strong>Meta Description:</strong><br>' + data.meta_description + '</p><p style="margin-top:12px;"><strong>Keywords:</strong><br>' + data.keywords.join(', ') + '</p></div>';
+                    renderSeoResult(resultDiv, data);
                 } else {
-                    resultDiv.innerHTML = '<div class="result-box error">❌ ' + (data.detail || data.message || 'Fout') + '</div>';
+                    renderNotice(resultDiv, data.detail || data.message || 'Fout bij genereren.');
                 }
             } catch (error) {
-                resultDiv.innerHTML = '<div class="result-box error">❌ ' + error.message + '</div>';
+                renderNotice(resultDiv, error.message || 'Genereren mislukt.');
             }
         }
         
@@ -435,7 +481,7 @@
             const resultDiv = document.getElementById('statsResult');
             
             if (!apiKey) {
-                resultDiv.innerHTML = '<div class="result-box error">❌ Vul API key in</div>';
+                renderNotice(resultDiv, 'Vul een API-key in.');
                 return;
             }
             
@@ -447,12 +493,12 @@
                 const data = await response.json();
                 
                 if (response.ok) {
-                    resultDiv.innerHTML = '<div class="stats-grid"><div class="stat-card"><h3>' + data.requests_today + '</h3><p>Requests Vandaag</p></div><div class="stat-card"><h3>' + data.daily_limit + '</h3><p>Daily Limit</p></div><div class="stat-card"><h3>' + data.total_requests + '</h3><p>Totaal Requests</p></div><div class="stat-card"><h3>' + new Date(data.created_at).toLocaleDateString('nl-NL') + '</h3><p>Geregistreerd</p></div></div>';
+                    renderUsage(resultDiv, data);
                 } else {
-                    resultDiv.innerHTML = '<div class="result-box error">❌ ' + (data.detail || 'Fout') + '</div>';
+                    renderNotice(resultDiv, data.detail || 'Fout bij ophalen gebruik.');
                 }
             } catch (error) {
-                resultDiv.innerHTML = '<div class="result-box error">❌ ' + error.message + '</div>';
+                renderNotice(resultDiv, error.message || 'Ophalen gebruik mislukt.');
             }
         }
         

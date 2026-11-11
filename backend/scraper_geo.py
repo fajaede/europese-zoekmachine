@@ -1,17 +1,26 @@
 import asyncio
+import os
+import re
 import httpx
-from pathlib import Path
 import yaml
+from backend.seo_geo_audit import validate_public_url
 
 # ===== CONFIGURATIE =====
-VALUESERP_API_KEY = "7FFD3319614B409BA697DB65D878F97B"
+VALUESERP_API_KEY = os.getenv("VALUESERP_API_KEY", "")
 VALUESERP_API_URL = "https://api.valueserp.com/search"
-MEILI_URL = "http://meilisearch:7700"
-MEILI_KEY = ""
+MEILI_URL = os.getenv("MEILI_HOST", "http://meilisearch:7700")
+MEILI_KEY = os.getenv("MEILI_MASTER_KEY", "")
 MAX_QUERIES_PER_COUNTRY = 2
 # ========================
 
 async def google_search(query: str, country_code: str) -> list[dict]:
+    if not VALUESERP_API_KEY:
+        raise RuntimeError("VALUESERP_API_KEY is not configured.")
+    if not query or len(query) > 200:
+        raise ValueError("Search query is empty or too long.")
+    if not re.fullmatch(r"[a-zA-Z]{2}", country_code):
+        raise ValueError("Invalid country code.")
+
     async with httpx.AsyncClient() as client:
         params = {
             "q": query,
@@ -53,6 +62,12 @@ async def process_country(country: dict, meili_client, query_index: int):
             
             if not url:
                 continue
+
+            try:
+                url = await validate_public_url(url)
+            except (TypeError, ValueError):
+                print("    Skipped result with a non-public or invalid URL.")
+                continue
             
             try:
                 await meili_client.index("documents").add_documents([{
@@ -76,13 +91,7 @@ async def main():
     
     meili_key = MEILI_KEY
     if not meili_key:
-        dc_path = Path("docker-compose.yml")
-        if dc_path.exists():
-            content = dc_path.read_text()
-            if "MEILI_MASTER_KEY=" in content:
-                meili_key = content.split("MEILI_MASTER_KEY=")[1].split("\n")[0].strip('"')
-        if not meili_key:
-            meili_key = "masterKey"
+        raise RuntimeError("MEILI_MASTER_KEY is not configured.")
     
     config_path = Path("/app/config/geo_queries.yaml")
     config = yaml.safe_load(config_path.read_text())
