@@ -788,7 +788,7 @@ class Crawler:  # pylint: disable=too-few-public-methods
             print(f"Onverwachte fout bij het verwerken van {url}: {e}")
 
     async def run(self, start_url: str, max_pages: int = MAX_CRAWL_PAGES, lock_acquired: bool = False):
-        """Start het crawlproces vanaf een begin-URL."""
+        """Crawl start_url, then every site waiting in crawler:pending_sites (one at a time)."""
         if not lock_acquired:
             lock_acquired = bool(
                 await self.redis.set("crawler:is_running", "1", ex=3600, nx=True)
@@ -797,35 +797,71 @@ class Crawler:  # pylint: disable=too-few-public-methods
             return
 
         try:
-            # Bepaal het hoofddomein voor de scope van de crawl
-            hostname = (urlparse(start_url).hostname or "").lower().rstrip(".")
-            self.start_domain = hostname.removeprefix("www.")
-            max_pages = min(max(int(max_pages), 1), MAX_CRAWL_PAGES)
-            await self.redis.set("crawler:domain", self.start_domain, ex=7200)
-
-            # Zorg ervoor dat een eventuele oude stop-vlag wordt verwijderd bij een nieuwe start.
-            await self.redis.delete("crawler:stop_flag")
-
-            # Er draait altijd maar één crawl tegelijk (lock hierboven). Restanten van een
-            # vorige crawl horen bij een ander domein en zouden de nieuwe start-URL verdringen,
-            # dus begin met een schone wachtrij.
-            await self.redis.delete("crawler:queue")
-            await self.redis.lpush("crawler:queue", start_url)
-
-            print(f"Crawler gestart voor {start_url} met een limiet van {max_pages} pagina's.")
-
-            crawled_count = 0
-            while (url := await self.redis.rpop("crawler:queue")) and crawled_count < max_pages:
-                if await self.redis.get("crawler:stop_flag"):
-                    print("Stopverzoek ontvangen, crawler wordt gestopt.")
+            next_url = start_url
+            while next_url:
+                stopped = await self._crawl_site(next_url, max_pages)
+                if stopped:
                     break
-                await self._process_page(url)
-                crawled_count += 1
+                next_url = await pop_pending_site(self.redis)
+                if next_url:
+                    # Verleng de lock voor de volgende site in de wachtrij.
+                    await self.redis.set("crawler:is_running", "1", ex=3600)
         finally:
             # Verwijder de 'is_running' vlag, ongeacht of de crawl succesvol was of crashte.
             await self.redis.delete("crawler:is_running")
             await self.redis.delete("crawler:domain")
             print("Crawl-sessie voltooid.")
+
+    async def _crawl_site(self, start_url: str, max_pages: int) -> bool:
+        """Crawl one domain. Returns True when a stop was requested."""
+        # Bepaal het hoofddomein voor de scope van de crawl
+        hostname = (urlparse(start_url).hostname or "").lower().rstrip(".")
+        self.start_domain = hostname.removeprefix("www.")
+        max_pages = min(max(int(max_pages), 1), MAX_CRAWL_PAGES)
+        await self.redis.set("crawler:domain", self.start_domain, ex=7200)
+
+        # Zorg ervoor dat een eventuele oude stop-vlag wordt verwijderd bij een nieuwe start.
+        await self.redis.delete("crawler:stop_flag")
+
+        # Er draait altijd maar één crawl tegelijk (lock). Restanten van een vorige crawl
+        # horen bij een ander domein en zouden de nieuwe start-URL verdringen,
+        # dus begin met een schone wachtrij.
+        await self.redis.delete("crawler:queue")
+        await self.redis.lpush("crawler:queue", start_url)
+
+        print(f"Crawler gestart voor {start_url} met een limiet van {max_pages} pagina's.")
+
+        crawled_count = 0
+        while (url := await self.redis.rpop("crawler:queue")) and crawled_count < max_pages:
+            if await self.redis.get("crawler:stop_flag"):
+                print("Stopverzoek ontvangen, crawler wordt gestopt.")
+                return True
+            await self._process_page(url)
+            crawled_count += 1
+        return False
+
+
+MAX_PENDING_SITES = 500
+
+
+async def add_pending_site(redis_client, url: str) -> tuple[bool, int]:
+    """Queue a site to crawl after the current crawl. Returns (added, waiting_count)."""
+    domain = (urlparse(url).hostname or "").lower().removeprefix("www.")
+    if not await redis_client.sadd("crawler:pending_domains", domain):
+        return False, await redis_client.llen("crawler:pending_sites")
+    if await redis_client.llen("crawler:pending_sites") >= MAX_PENDING_SITES:
+        await redis_client.srem("crawler:pending_domains", domain)
+        raise HTTPException(status_code=429, detail="De aanmeldwachtrij is vol. Probeer het later opnieuw.")
+    await redis_client.lpush("crawler:pending_sites", url)
+    return True, await redis_client.llen("crawler:pending_sites")
+
+
+async def pop_pending_site(redis_client) -> str | None:
+    url = await redis_client.rpop("crawler:pending_sites")
+    if url:
+        domain = (urlparse(url).hostname or "").lower().removeprefix("www.")
+        await redis_client.srem("crawler:pending_domains", domain)
+    return url
 
 
 class CrawlRequest(BaseModel):
@@ -869,7 +905,7 @@ async def start_crawl(
         active_domain = (await redis_client.get("crawler:domain") or "").lower().removeprefix("www.")
         incoming_domain = (urlparse(crawl_url).hostname or "").lower().removeprefix("www.")
         if not active_domain or (incoming_domain != active_domain and not incoming_domain.endswith(f".{active_domain}")):
-            raise HTTPException(status_code=409, detail="Er draait al een crawl voor een ander domein.")
+            return await _pending_response(redis_client, crawl_url)
         queue_size = await redis_client.llen("crawler:queue")
         if queue_size >= MAX_CRAWL_QUEUE:
             raise HTTPException(status_code=429, detail="De crawl-wachtrij is vol. Probeer het later opnieuw.")
@@ -890,7 +926,7 @@ async def start_crawl(
         active_domain = (await redis_client.get("crawler:domain") or "").lower().removeprefix("www.")
         incoming_domain = (urlparse(crawl_url).hostname or "").lower().removeprefix("www.")
         if not active_domain or (incoming_domain != active_domain and not incoming_domain.endswith(f".{active_domain}")):
-            raise HTTPException(status_code=409, detail="Er draait al een crawl voor een ander domein.")
+            return await _pending_response(redis_client, crawl_url)
         queue_size = await redis_client.llen("crawler:queue")
         if queue_size >= MAX_CRAWL_QUEUE:
             raise HTTPException(status_code=429, detail="De crawl-wachtrij is vol. Probeer het later opnieuw.")
@@ -913,6 +949,18 @@ async def start_crawl(
         "queue_size": 1,
         "status": "started",
     }
+
+
+async def _pending_response(redis_client, crawl_url: str) -> dict:
+    """Another domain is being crawled: queue this site instead of refusing it."""
+    added, waiting = await add_pending_site(redis_client, crawl_url)
+    message = (
+        "Bedankt! Er wordt nu een andere site gecrawld. Je site staat in de wachtrij "
+        "en wordt daarna automatisch gecrawld."
+        if added
+        else "Deze site staat al in de wachtrij en wordt binnenkort gecrawld."
+    )
+    return {"message": message, "status": "pending", "pending_sites": waiting}
 
 
 def is_admin_request(request: Request) -> bool:
@@ -980,6 +1028,8 @@ async def reset_crawl(request: Request):
         "crawler:visited_urls",
         "crawler:content_hashes",
         "crawler:indexed_urls",
+        "crawler:pending_sites",
+        "crawler:pending_domains",
     )
 
     await meili_index.delete_all_documents()
@@ -1010,6 +1060,8 @@ async def get_crawl_status(request: Request):
 
     return {
         "status": "actief" if is_running else "inactief",
+        "current_domain": (await redis_client.get("crawler:domain")) if is_running else None,
+        "pending_sites": await redis_client.llen("crawler:pending_sites"),
         "pages_in_queue": pages_in_queue,
         "pages_visited": pages_visited,
         "unique_pages_indexed": indexed_pages,
