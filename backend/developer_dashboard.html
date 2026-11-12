@@ -247,6 +247,7 @@
                     <label for="project">Project naam (optioneel)</label>
                     <input type="text" id="project" placeholder="Mijn Project" />
                 </div>
+                <!--TURNSTILE-->
                 <button class="btn" onclick="register()">Registreer per e-mail</button>
                 <div id="registerResult"></div>
             </div>
@@ -486,6 +487,11 @@
             container.replaceChildren(grid);
         }
         
+        function captchaToken() {
+            const field = document.querySelector('[name="cf-turnstile-response"]');
+            return field ? field.value : '';
+        }
+
         async function register() {
             const email = document.getElementById('email').value.trim();
             const project = document.getElementById('project').value.trim();
@@ -500,9 +506,10 @@
                 const response = await fetch(API_BASE + '/register', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ email, project_name: project || undefined })
+                    body: JSON.stringify({ email, project_name: project || undefined, captcha_token: captchaToken() })
                 });
                 const data = await response.json();
+                if (window.turnstile) window.turnstile.reset();
                 
                 if (response.ok) {
                     renderNotice(resultDiv, data.message || 'Controleer je e-mail om de registratie te bevestigen.', 'success');

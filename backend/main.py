@@ -225,8 +225,31 @@ def read_root():
 @app.get("/developers", response_class=HTMLResponse)
 async def developer_dashboard():
     """Developer dashboard pagina."""
-    with open(os.path.join(os.path.dirname(__file__), "developer_dashboard.html"), "r") as f:
-        return HTMLResponse(content=f.read(), status_code=200)
+    with open(os.path.join(os.path.dirname(__file__), "developer_dashboard.html"), "r", encoding="utf-8") as f:
+        page = f.read()
+    site_key = os.getenv("TURNSTILE_SITE_KEY", "").strip()
+    if re.fullmatch(r"[A-Za-z0-9_-]{1,100}", site_key):
+        page = page.replace(
+            "<!--TURNSTILE-->",
+            '<div class="cf-turnstile" style="margin-bottom:16px" '
+            f'data-sitekey="{site_key}"></div>'
+            '<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>',
+        )
+    return HTMLResponse(
+        content=page,
+        status_code=200,
+        headers={
+            "Content-Security-Policy": (
+                "default-src 'self'; script-src 'self' 'unsafe-inline' https://challenges.cloudflare.com; "
+                "frame-src https://challenges.cloudflare.com; style-src 'self' 'unsafe-inline'; "
+                "img-src 'self' data:; connect-src 'self'; base-uri 'none'; form-action 'self'; "
+                "frame-ancestors 'none'"
+            ),
+            "X-Content-Type-Options": "nosniff",
+            "Referrer-Policy": "no-referrer",
+            "Cache-Control": "no-store",
+        },
+    )
 
 @app.get("/health")
 def health_check():

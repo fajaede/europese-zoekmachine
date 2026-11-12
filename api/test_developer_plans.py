@@ -174,6 +174,70 @@ class DeveloperPlanTests(unittest.TestCase):
             with self.assertRaises(developer_api.HTTPException):
                 asyncio.run(developer_api.developer_mollie_webhook(FakeRequest()))
 
+    def test_registration_mail_is_limited_per_email_across_ips(self):
+        sent = []
+        with (
+            patch.dict(os.environ, {"DEVELOPER_VERIFICATION_BASE_URL": "https://api.example.test"}),
+            patch.object(developer_api, "_send_verification_email", lambda *args: sent.append(args)),
+        ):
+            codes = [
+                self.client.post(
+                    "/api/developers/register",
+                    headers={"X-Real-IP": f"198.51.100.{i}"},
+                    json={"email": "victim@example.com"},
+                ).status_code
+                for i in range(5)
+            ]
+        self.assertEqual(codes, [202, 202, 202, 429, 429])
+        self.assertEqual(len(sent), 3)
+
+    def test_registration_uses_forwarded_ip_not_proxy_address(self):
+        with (
+            patch.dict(os.environ, {"DEVELOPER_VERIFICATION_BASE_URL": "https://api.example.test"}),
+            patch.object(developer_api, "_send_verification_email", lambda *args: None),
+        ):
+            for i in range(6):
+                response = self.client.post(
+                    "/api/developers/register",
+                    headers={"X-Real-IP": "203.0.113.7"},
+                    json={"email": f"user{i}@example.com"},
+                )
+            other_visitor = self.client.post(
+                "/api/developers/register",
+                headers={"X-Real-IP": "203.0.113.8"},
+                json={"email": "someone@example.com"},
+            )
+        self.assertEqual(response.status_code, 429)  # 6th from the same visitor
+        self.assertEqual(other_visitor.status_code, 202)  # others are not blocked
+
+    def test_captcha_required_when_site_key_is_configured(self):
+        with patch.dict(os.environ, {"TURNSTILE_SITE_KEY": "site", "TURNSTILE_SECRET_KEY": "secret"}):
+            response = self.client.post("/api/developers/register", json={"email": "a@example.com"})
+        self.assertEqual(response.status_code, 400)
+
+    def test_free_tier_has_a_global_daily_cap(self):
+        with patch.object(developer_api, "FREE_GLOBAL_DAY", 1), patch.dict(os.environ, {"OPENAI_API_KEY": ""}):
+            first = self.client.post(
+                "/api/developers/seo/generate",
+                headers={"X-API-Key": "sk_eu_testkey"},
+                json={"content": "Bakkerij in Antwerpen"},
+            )
+            second = self.client.post(
+                "/api/developers/seo/generate",
+                headers={"X-API-Key": "sk_eu_testkey"},
+                json={"content": "Bakkerij in Antwerpen"},
+            )
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(second.status_code, 503)
+
+    def test_output_is_plain_text(self):
+        self.assertEqual(
+            developer_api.clean_text('<script>alert(1)</script>Titel\x00 <b>vet</b>  "x"', 60),
+            'alert(1)Titel vet "x"',
+        )
+        self.assertEqual(developer_api.clean_text("a <img src=x onerror=1", 60), "a img src=x onerror=1")
+        self.assertEqual(len(developer_api.clean_text("x" * 500, 60)), 60)
+
     def test_usage_reports_plan_and_rotation_keeps_it(self):
         expires = int(time.time()) + 30 * DAY
         self._set_plan("pro", expires)
