@@ -1230,11 +1230,18 @@ async def summarize(
     De logica is opgesplitst in kleinere helpers om Pylint‑regels
     C0301 (lijn te lang) en R0914 (te veel locale variabelen) te vermijden.
     """
-    await enforce_request_rate_limit(request, "summarize", limit=8, window_seconds=60)
     if not q or len(q) > 500:
         if q and len(q) > 500:
             raise HTTPException(status_code=422, detail="De vraag is te lang.")
         return {"ai": "Stel een vraag om een AI‑samenvatting te krijgen."}
+
+    # Identieke vragen (zelfde zoekterm + geschiedenis) komen uit de cache: geen nieuwe AI-kosten.
+    cache_key = _summary_cache_key(q, chat_history)
+    cached = await _summary_cache_get(request, cache_key)
+    if cached:
+        return {"ai": cached, "cached": True}
+
+    await enforce_request_rate_limit(request, "summarize", limit=8, window_seconds=60)
 
     # Controleer of de OpenAI client beschikbaar is.
     if not hasattr(request.app.state, "openai_client") or not request.app.state.openai_client:
@@ -1251,7 +1258,49 @@ async def summarize(
 
     # 3. LLM‑aanroep (OpenAI → Ollama fallback)
     response = await _call_llm(request, system_prompt, user_prompt, chat_history)
-    return {"ai": _limit_summary_length(response)}
+    summary = _limit_summary_length(response)
+    ttl = SUMMARY_CACHE_TTL_FOLLOWUP if chat_history else SUMMARY_CACHE_TTL
+    await _summary_cache_set(request, cache_key, summary, ttl)
+    return {"ai": summary}
+
+
+SUMMARY_MODEL = os.getenv("SUMMARY_OPENAI_MODEL", "gpt-4o-mini").strip() or "gpt-4o-mini"
+SUMMARY_CACHE_TTL = int(os.getenv("SUMMARY_CACHE_TTL_SECONDS", str(6 * 60 * 60)))
+SUMMARY_CACHE_TTL_FOLLOWUP = int(os.getenv("SUMMARY_CACHE_TTL_FOLLOWUP_SECONDS", str(60 * 60)))
+
+
+def _summary_cache_key(q: str, chat_history: list[dict]) -> str:
+    """Stable key: normalised question + (cleaned) conversation history."""
+    normalized_q = " ".join(q.lower().split())
+    payload = json.dumps(
+        {"q": normalized_q, "h": chat_history, "m": SUMMARY_MODEL},
+        ensure_ascii=False,
+        sort_keys=True,
+    )
+    return "summary:v1:" + hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+async def _summary_cache_get(request: Request, key: str) -> str | None:
+    redis_client = getattr(request.app.state, "redis_client", None)
+    if not redis_client:
+        return None
+    try:
+        value = await redis_client.get(key)
+    except redis.RedisError:
+        return None
+    if isinstance(value, bytes):
+        value = value.decode("utf-8", errors="replace")
+    return value or None
+
+
+async def _summary_cache_set(request: Request, key: str, value: str, ttl: int) -> None:
+    redis_client = getattr(request.app.state, "redis_client", None)
+    if not redis_client or not value or ttl <= 0:
+        return
+    try:
+        await redis_client.set(key, value, ex=ttl)
+    except redis.RedisError:
+        pass
 
 
 async def _call_llm(
@@ -1270,7 +1319,7 @@ async def _call_llm(
             chat_completion = await (
                 client.chat.completions.create(
                     messages=messages,
-                    model="gpt-3.5-turbo",
+                    model=SUMMARY_MODEL,
                     temperature=0.3,
                     max_tokens=180,
                 )

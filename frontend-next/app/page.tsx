@@ -95,6 +95,8 @@ export default function Home() {
 
   // Tab beheer voor Afbeeldingen, Video's, Nieuws & Financieel
   const [activeTab, setActiveTab] = useState<"all" | "images" | "videos" | "news" | "finance">("all");
+  // De laatst uitgevoerde zoekterm: tabs tonen resultaten voor deze term, ook als het invoerveld al is gewijzigd.
+  const [searchedQuery, setSearchedQuery] = useState("");
 
   // Ref en effect voor automatisch scrollen binnen de chatbox (zonder de hele pagina te verschuiven)
   const chatContainerRef = useRef<HTMLDivElement>(null);
@@ -113,7 +115,8 @@ export default function Home() {
     searchQuery: string,
     currentTab: "all" | "images" | "videos" | "news" | "finance",
     historyList: Message[] = [],
-    isFollowUp: boolean = false
+    isFollowUp: boolean = false,
+    includeAI: boolean = currentTab === "all"
   ) => {
     if (!isFollowUp) {
       setLoading(true);
@@ -133,7 +136,8 @@ export default function Home() {
     }
     const searchUrl = `/api/search?${searchParams.toString()}`;
 
-    const searchRequest = fetch(searchUrl)
+    // Vervolgvragen halen alleen een nieuw AI-antwoord op, geen nieuwe zoekresultaten.
+    const searchRequest = isFollowUp ? Promise.resolve() : fetch(searchUrl)
       .then(res => {
         if (!res.ok) {
           return res.json().then(err => { throw new Error(err.detail || `Zoekopdracht mislukt: ${res.status}`) });
@@ -153,7 +157,7 @@ export default function Home() {
 
     // --- Haal AI-samenvatting parallel op ---
     let aiRequest = Promise.resolve();
-    if (currentTab === "all") {
+    if (includeAI) {
       const aiUrl = `/api/summarize?${new URLSearchParams({
             q: searchQuery,
             history: JSON.stringify(historyList.filter(msg => msg.content !== "fajaedeAI+ is aan het denken...")),
@@ -204,7 +208,8 @@ export default function Home() {
       if (prev.some(msg => msg.content === "fajaedeAI+ is aan het denken...")) return prev;
       return [{ role: "assistant", content: "fajaedeAI+ is aan het denken..." }];
     });
-    await performSearch(q, "all", [], false);
+    setSearchedQuery(q);
+    await performSearch(q, "all", [], false, true);
   };
 
   const handleFollowUp = async (e: React.FormEvent) => {
@@ -222,14 +227,16 @@ export default function Home() {
     
     const currentQuery = followUpQuery;
     setFollowUpQuery("");
-    await performSearch(currentQuery, activeTab, updatedHistory, true);
+    await performSearch(currentQuery, activeTab, updatedHistory, true, true);
   };
 
   const handleTabClick = async (tab: "all" | "images" | "videos" | "news" | "finance") => {
+    if (tab === activeTab) return;
     setActiveTab(tab);
-    if (q.trim()) {
-      // Voer een zoekopdracht uit voor de nieuwe tab, met behoud van de bestaande chatgeschiedenis.
-      await performSearch(q, tab, chatHistory, false);
+    if (searchedQuery.trim()) {
+      // Alleen de resultaten voor deze tab ophalen. Het AI-antwoord blijft staan en
+      // wordt NIET opnieuw gegenereerd (bespaart AI-kosten).
+      await performSearch(searchedQuery, tab, chatHistory, false, false);
     }
   };
 
