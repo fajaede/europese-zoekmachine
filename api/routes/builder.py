@@ -125,6 +125,11 @@ def init_builder_storage() -> None:
                 request_count INTEGER NOT NULL DEFAULT 0,
                 PRIMARY KEY (scope_hash, window_start)
             );
+            CREATE TABLE IF NOT EXISTS builder_free_claims (
+                email_key TEXT PRIMARY KEY,
+                account_id TEXT NOT NULL REFERENCES builder_accounts(id),
+                claimed_at INTEGER NOT NULL
+            );
             CREATE INDEX IF NOT EXISTS idx_builder_sessions_account
                 ON builder_sessions(account_id);
             CREATE INDEX IF NOT EXISTS idx_builder_payments_account
@@ -140,6 +145,14 @@ def init_builder_storage() -> None:
         now = int(time.time())
         stale_before = now - 15 * 60
         connection.execute("BEGIN IMMEDIATE")
+        # Backfill free claims for accounts that used their free request before claims existed.
+        for row in connection.execute(
+            "SELECT id, email, created_at FROM builder_accounts WHERE free_used = 1"
+        ).fetchall():
+            connection.execute(
+                "INSERT OR IGNORE INTO builder_free_claims (email_key, account_id, claimed_at) VALUES (?, ?, ?)",
+                (normalize_email(row["email"]), row["id"], row["created_at"]),
+            )
         # Housekeeping: drop expired sessions/verifications and old rate-limit buckets.
         connection.execute("DELETE FROM builder_sessions WHERE expires_at < ?", (now,))
         connection.execute("DELETE FROM builder_verifications WHERE expires_at < ?", (now,))
@@ -156,10 +169,7 @@ def init_builder_storage() -> None:
         ).fetchall()
         for usage in stale_usage:
             if usage["charge_type"] == "free":
-                connection.execute(
-                    "UPDATE builder_accounts SET free_used = 0 WHERE id = ?",
-                    (usage["account_id"],),
-                )
+                _release_free(connection, usage["account_id"])
             else:
                 connection.execute(
                     "UPDATE builder_accounts SET credits = credits + 1 WHERE id = ?",
@@ -176,6 +186,41 @@ def init_builder_storage() -> None:
 
 def _hash(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+GMAIL_DOMAINS = {"gmail.com", "googlemail.com"}
+
+
+def normalize_email(email: str) -> str:
+    """Canonical form used only to count the free request and per-address limits.
+
+    Strips "+tag" sub-addressing for every domain and dots for Gmail, so
+    naam+1@gmail.com and n.aam@gmail.com count as naam@gmail.com. Accounts and
+    mail delivery keep using the exact address the user verified.
+    """
+    local, _, domain = email.strip().lower().rpartition("@")
+    if not local:
+        return email.strip().lower()
+    local = local.split("+", 1)[0] or local
+    if domain in GMAIL_DOMAINS:
+        domain = "gmail.com"
+        local = local.replace(".", "") or local
+    return f"{local}@{domain}"
+
+
+def _free_available(connection: sqlite3.Connection, account_id: str, email: str, free_used: int) -> bool:
+    if free_used:
+        return False
+    claim = connection.execute(
+        "SELECT account_id FROM builder_free_claims WHERE email_key = ?",
+        (normalize_email(email),),
+    ).fetchone()
+    return claim is None or claim["account_id"] == account_id
+
+
+def _release_free(connection: sqlite3.Connection, account_id: str) -> None:
+    connection.execute("UPDATE builder_accounts SET free_used = 0 WHERE id = ?", (account_id,))
+    connection.execute("DELETE FROM builder_free_claims WHERE account_id = ?", (account_id,))
 
 
 def _env_int(name: str, default: int) -> int:
@@ -363,11 +408,14 @@ def _reserve_usage(account_id: str, client_ip: str = "unknown") -> tuple[str, st
     try:
         connection.execute("BEGIN IMMEDIATE")
         account = connection.execute(
-            "SELECT free_used, credits FROM builder_accounts WHERE id = ?",
+            "SELECT email, free_used, credits FROM builder_accounts WHERE id = ?",
             (account_id,),
         ).fetchone()
         if not account:
             raise HTTPException(status_code=401, detail="Builder-account niet gevonden.")
+        free_available = _free_available(
+            connection, account_id, account["email"], account["free_used"]
+        )
 
         keys = {
             "generate-account": account_id,
@@ -376,7 +424,7 @@ def _reserve_usage(account_id: str, client_ip: str = "unknown") -> tuple[str, st
             "free-global": "all",
         }
         limits = list(GENERATE_LIMITS)
-        if not account["free_used"]:
+        if free_available:
             limits += list(FREE_LIMITS)
         if not _consume_rate_limits(
             connection,
@@ -387,11 +435,18 @@ def _reserve_usage(account_id: str, client_ip: str = "unknown") -> tuple[str, st
                 detail="Te veel aanvragen op dit moment. Probeer het later opnieuw.",
             )
 
-        if not account["free_used"]:
+        if free_available:
             charge_type = "free"
             connection.execute(
                 "UPDATE builder_accounts SET free_used = 1 WHERE id = ?",
                 (account_id,),
+            )
+            connection.execute(
+                """
+                INSERT OR REPLACE INTO builder_free_claims (email_key, account_id, claimed_at)
+                VALUES (?, ?, ?)
+                """,
+                (normalize_email(account["email"]), account_id, int(time.time())),
             )
         elif account["credits"] > 0:
             charge_type = "credit"
@@ -402,7 +457,10 @@ def _reserve_usage(account_id: str, client_ip: str = "unknown") -> tuple[str, st
         else:
             raise HTTPException(
                 status_code=402,
-                detail="Je gratis aanvraag is gebruikt. Koop een pakket van 10 credits voor €5,00.",
+                detail=(
+                    "De gratis aanvraag is al gebruikt voor dit e-mailadres (of een variant "
+                    "ervan). Koop een pakket van 10 credits voor €5,00."
+                ),
             )
 
         connection.execute(
@@ -434,10 +492,7 @@ def _finish_usage(usage_id: str, refund: bool) -> None:
             return
         if refund:
             if usage["charge_type"] == "free":
-                connection.execute(
-                    "UPDATE builder_accounts SET free_used = 0 WHERE id = ?",
-                    (usage["account_id"],),
-                )
+                _release_free(connection, usage["account_id"])
             else:
                 connection.execute(
                     "UPDATE builder_accounts SET credits = credits + 1 WHERE id = ?",
@@ -465,7 +520,7 @@ async def request_verification(payload: VerificationRequest, request: Request) -
     email = str(payload.email).strip().lower()
     client_ip = _client_ip(request)
     await _verify_captcha(payload.captcha_token, client_ip)
-    keys = {"verify-ip": client_ip, "verify-email": email, "verify-global": "all"}
+    keys = {"verify-ip": client_ip, "verify-email": normalize_email(email), "verify-global": "all"}
     now = int(time.time())
     token = secrets.token_urlsafe(32)
     connection = _connect()
@@ -592,10 +647,17 @@ async def get_account(request: Request) -> dict:
             "free_available": False,
             "credits": 0,
         }
+    connection = _connect()
+    try:
+        free_available = _free_available(
+            connection, account["id"], account["email"], account["free_used"]
+        )
+    finally:
+        connection.close()
     return {
         "authenticated": True,
         "email": account["email"],
-        "free_available": not bool(account["free_used"]),
+        "free_available": free_available,
         "credits": account["credits"],
         "checkout_available": checkout_available,
         "checkout_message": checkout_message,

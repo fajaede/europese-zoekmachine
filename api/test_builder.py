@@ -229,6 +229,39 @@ class BuilderTests(unittest.TestCase):
         self.assertEqual(turnstile_calls[0]["secret"], "test-secret")
         self.assertEqual(send_email_mock.call_count, 1)
 
+    def test_normalize_email_merges_common_variants(self):
+        n = builder.normalize_email
+        self.assertEqual(n("Naam+promo@Gmail.com"), "naam@gmail.com")
+        self.assertEqual(n("n.a.am@googlemail.com"), "naam@gmail.com")
+        self.assertEqual(n("jan+1@outlook.com"), "jan@outlook.com")
+        # Dots only matter for Gmail; other providers keep them.
+        self.assertEqual(n("j.an@outlook.com"), "j.an@outlook.com")
+
+    def test_email_variant_cannot_get_a_second_free_generation(self):
+        connection = builder._connect()
+        connection.execute(
+            "INSERT INTO builder_accounts (id, email, created_at) VALUES (?, ?, ?)",
+            ("variant", "n.aam+extra@gmail.com", int(time.time())),
+        )
+        connection.execute(
+            "INSERT INTO builder_accounts (id, email, created_at) VALUES (?, ?, ?)",
+            ("original", "naam@gmail.com", int(time.time())),
+        )
+        connection.commit()
+        connection.close()
+
+        usage_id, charge_type = builder._reserve_usage("original", "198.51.100.1")
+        self.assertEqual(charge_type, "free")
+
+        with self.assertRaises(HTTPException) as error:
+            builder._reserve_usage("variant", "198.51.100.2")
+        self.assertEqual(error.exception.status_code, 402)
+
+        # A failed (refunded) free generation releases the claim again.
+        builder._finish_usage(usage_id, refund=True)
+        _, charge_type = builder._reserve_usage("variant", "198.51.100.2")
+        self.assertEqual(charge_type, "free")
+
     def test_free_generations_are_capped_per_ip(self):
         connection = builder._connect()
         for index in range(5):
