@@ -657,6 +657,16 @@ export default function BuilderPage() {
               </div>
             </div>
 
+            {result && Array.isArray(result.validation_report?.warnings) && (
+              <ul className="mb-4 space-y-1 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                {(result.validation_report.warnings as unknown[])
+                  .filter((warning): warning is string => typeof warning === 'string')
+                  .map((warning) => (
+                    <li key={warning}>⚠ {warning}</li>
+                  ))}
+              </ul>
+            )}
+
             {/* Browser Preview Window */}
             <div className="w-full bg-slate-900 border border-slate-200/80 rounded-2xl overflow-hidden shadow-lg flex flex-col h-[75vh] min-h-150">
               {/* Browser Header Bar */}

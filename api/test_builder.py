@@ -373,8 +373,9 @@ class BuilderTests(unittest.TestCase):
     def test_website_generation_returns_static_html_without_scripts(self):
         class FakeCompletions:
             async def create(self, **kwargs):
-                self_test.assertEqual(kwargs["model"], "gpt-4o-mini")
-                self_test.assertLessEqual(kwargs["max_tokens"], 6000)
+                self_test.assertEqual(kwargs["model"], "gpt-4o-2024-08-06")
+                self_test.assertLessEqual(kwargs["max_tokens"], 16000)
+                self_test.assertIn("images.unsplash.com", kwargs["messages"][1]["content"])
                 return SimpleNamespace(
                     choices=[
                         SimpleNamespace(
@@ -412,6 +413,48 @@ class BuilderTests(unittest.TestCase):
         self.assertIn("<h1>Hallo</h1>", result["html"])
         self.assertNotIn("<script", result["html"])
         self.assertEqual(result["site_brief"]["keywords"], ["bakker"])
+
+    def test_json_ld_is_kept_and_unknown_images_are_replaced(self):
+        from api.routes.website_generator import (
+            ALLOWED_PHOTO_IDS,
+            _restrict_images,
+            _strip_active_content,
+        )
+
+        html = (
+            '<html><head><title>x</title>'
+            '<script type="application/ld+json">{"@type": "Restaurant", "name": "A</b> & B"}</script>'
+            '<script>alert(1)</script></head><body>'
+            '<img src="https://images.unsplash.com/photo-123-abc?w=10">'
+            '<img src="https://evil.test/tracker.gif">'
+            '<img src="https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?w=10">'
+            '</body></html>'
+        )
+        cleaned = _strip_active_content(html)
+        self.assertIn('<script type="application/ld+json">', cleaned)
+        self.assertIn('"@type": "Restaurant"', cleaned)
+        self.assertNotIn("alert(1)", cleaned)
+        self.assertEqual(cleaned.count("</script>"), 1)
+        self.assertIn(r"A<\/b> & B", cleaned)
+
+        restricted = _restrict_images(cleaned, "food")
+        self.assertNotIn("evil.test", restricted)
+        self.assertNotIn("photo-123-abc", restricted)
+        self.assertIn("1517248135467-4c7edcad34c4", restricted)
+        self.assertIn("1517248135467-4c7edcad34c4", ALLOWED_PHOTO_IDS)
+
+    def test_photo_category_follows_site_type_and_keywords(self):
+        from api.routes.website_generator import _photo_category
+
+        self.assertEqual(_photo_category({"site_type": "restaurant"}), "food")
+        self.assertEqual(
+            _photo_category({"site_type": "general_business", "industry": "horeca"}),
+            "food",
+        )
+        self.assertEqual(
+            _photo_category({"site_type": "general_business", "industry": "IT-advies"}),
+            "business",
+        )
 
 
 if __name__ == "__main__":
