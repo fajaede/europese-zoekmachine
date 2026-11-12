@@ -272,10 +272,10 @@ export default function Home() {
       <div className="absolute bottom-[-10%] right-[-10%] h-150 w-150 rounded-full bg-blue-100/30 blur-[120px] -z-10"></div>
 
       <div className="w-full max-w-4xl flex flex-col items-center text-center relative z-10">
-        {/* Version Badge */}
-        <div className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-semibold bg-orange-50 text-orange-600 border border-orange-100 mb-5 tracking-wider uppercase">
-          <span className="flex h-2 w-2 rounded-full bg-orange-500 animate-pulse"></span>
-          Versie 1.3 · Stable
+        {/* Badge */}
+        <div className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-semibold bg-orange-50 text-orange-700 border border-orange-100 mb-5 tracking-wider uppercase">
+          <span aria-hidden="true" className="flex h-1.5 w-1.5 rounded-full bg-orange-500"></span>
+          Europees · Privacyvriendelijk
         </div>
 
         {/* Logo / Header */}
@@ -735,7 +735,7 @@ export default function Home() {
             {/* Card 2: Meld je site aan */}
             <div className="bg-white/70 backdrop-blur-sm p-6 md:p-8 rounded-3xl shadow-[0_4px_20px_rgb(0,0,0,0.02)] border border-slate-200/60 hover:-translate-y-1 hover:shadow-[0_12px_30px_rgb(0,0,0,0.06)] hover:border-slate-350 hover:bg-white transition-all duration-300 flex flex-col gap-4">
               <div className="flex items-center gap-4">
-                <div className="shrink-0 w-12 h-12 bg-blue-50 rounded-2xl flex items-center justify-center text-blue-500 border border-blue-100">
+                <div className="shrink-0 w-12 h-12 bg-slate-100 rounded-2xl flex items-center justify-center text-slate-600 border border-slate-200">
                 <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
                     <path d="M10 14a3.5 3.5 0 0 0 5 0l4 -4a3.5 3.5 0 0 0 -5 -5l-4 4" />
                     <path d="M14 10a3.5 3.5 0 0 0 -5 0l-4 4a3.5 3.5 0 0 0 5 5l4 -4" />
@@ -797,7 +797,7 @@ export default function Home() {
               </Link>
               {/* Onafhankelijk */}
               <div className="bg-white/70 backdrop-blur-sm p-6 rounded-3xl shadow-[0_4px_20px_rgb(0,0,0,0.02)] border border-slate-200/60 hover:-translate-y-1 hover:shadow-[0_12px_30px_rgb(0,0,0,0.06)] hover:border-slate-350 hover:bg-white transition-all duration-300 flex gap-4">
-                <div className="shrink-0 w-12 h-12 bg-indigo-50 rounded-2xl flex items-center justify-center text-indigo-500 border border-indigo-100">
+                <div className="shrink-0 w-12 h-12 bg-slate-100 rounded-2xl flex items-center justify-center text-slate-600 border border-slate-200">
                   <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
                     <circle cx="12" cy="12" r="10" /><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20" /><path d="M2 12h20" />
                   </svg>
@@ -813,7 +813,7 @@ export default function Home() {
 
         <section
           aria-label="PSA"
-          className="mt-8 rounded-2xl border border-slate-200/70 bg-white/70 p-3 shadow-sm"
+          className="mt-10 h-21 w-21 overflow-hidden rounded-xl opacity-70 transition-opacity hover:opacity-100"
         >
           <iframe
             src="https://psa.fajaede.nl/embed/psa?id=PSA-4GRPTX"
@@ -823,7 +823,7 @@ export default function Home() {
             scrolling="no"
             title="Fajaede PSA"
             loading="lazy"
-            className="block overflow-hidden border-0"
+            className="block origin-top-left scale-[0.6] overflow-hidden border-0"
           />
         </section>
       </div>
