@@ -806,9 +806,11 @@ class Crawler:  # pylint: disable=too-few-public-methods
             # Zorg ervoor dat een eventuele oude stop-vlag wordt verwijderd bij een nieuwe start.
             await self.redis.delete("crawler:stop_flag")
 
-            # Voeg de start_url toe aan de wachtrij als deze leeg is
-            if await self.redis.llen("crawler:queue") == 0:
-                await self.redis.lpush("crawler:queue", start_url)
+            # Er draait altijd maar één crawl tegelijk (lock hierboven). Restanten van een
+            # vorige crawl horen bij een ander domein en zouden de nieuwe start-URL verdringen,
+            # dus begin met een schone wachtrij.
+            await self.redis.delete("crawler:queue")
+            await self.redis.lpush("crawler:queue", start_url)
 
             print(f"Crawler gestart voor {start_url} met een limiet van {max_pages} pagina's.")
 
@@ -852,9 +854,11 @@ async def start_crawl(
             detail="Kan niet crawlen: MeiliSearch is niet beschikbaar.",
         )
 
-    await enforce_request_rate_limit(
-        request, "crawl-submit", limit=3, window_seconds=3600, global_limit=60
-    )
+    # Beheerders (geldige X-Admin-Key) mogen zonder publieke limiet crawls starten.
+    if not is_admin_request(request):
+        await enforce_request_rate_limit(
+            request, "crawl-submit", limit=3, window_seconds=3600, global_limit=60
+        )
 
     try:
         crawl_url = await validate_public_url(crawl_request.url.strip())
@@ -909,6 +913,15 @@ async def start_crawl(
         "queue_size": 1,
         "status": "started",
     }
+
+
+def is_admin_request(request: Request) -> bool:
+    """True when the request carries the configured admin key (constant-time compare)."""
+    expected_key = os.getenv("ADMIN_API_KEY")
+    provided_key = request.headers.get("X-Admin-Key")
+    if not expected_key or not provided_key:
+        return False
+    return hmac.compare_digest(provided_key, expected_key)
 
 
 def require_admin_key(request: Request) -> None:
