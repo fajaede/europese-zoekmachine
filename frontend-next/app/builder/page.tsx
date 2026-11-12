@@ -695,7 +695,7 @@ export default function BuilderPage() {
                 </div>
                 {/* Fake Address bar */}
                 <div className="flex-1 bg-white border border-slate-200 rounded-lg py-1 px-3 text-center text-xs text-slate-400 truncate select-none font-mono">
-                  {result ? `fajaedebuilder.ai/sites/${siteType}` : 'fajaedebuilder.ai/preview-site'}
+                  {result ? `fajaede.eu/builder/voorbeeld/${siteType}` : 'fajaede.eu/builder/voorbeeld'}
                 </div>
               </div>
 

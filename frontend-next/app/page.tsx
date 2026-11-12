@@ -440,7 +440,7 @@ export default function Home() {
                     <button
                       type="submit"
                       disabled={followUpLoading}
-                      className="bg-blue-600 text-white p-3 rounded-full hover:bg-blue-500 transition-colors shadow-sm disabled:bg-slate-400 flex items-center justify-center min-w-10.5 h-10.5"
+                      className="bg-slate-900 text-white p-3 rounded-full hover:bg-slate-700 transition-colors shadow-sm disabled:bg-slate-400 flex items-center justify-center min-w-10.5 h-10.5"
                       title="Stuur"
                     >
                       {followUpLoading ? (
@@ -754,14 +754,14 @@ export default function Home() {
                   value={submitUrl}
                   onChange={(e) => setSubmitUrl(e.target.value)}
                   placeholder="https://www.jouwwebsite.eu"
-                  className="flex-1 px-5 py-3 border border-slate-200 rounded-full focus:outline-none focus:ring-2 focus:ring-blue-500/50 bg-white text-slate-800 shadow-sm text-sm"
+                  className="flex-1 px-5 py-3 border border-slate-200 rounded-full focus:outline-none focus:ring-2 focus:ring-orange-500/40 bg-white text-slate-800 shadow-sm text-sm"
                   disabled={submitLoading}
                   required
                 />
                 <button
                   type="submit"
                   disabled={submitLoading}
-                  className="bg-blue-600 text-white px-6 py-3 rounded-full hover:bg-blue-500 transition-colors shadow-sm disabled:bg-slate-400 flex items-center justify-center font-semibold"
+                  className="bg-slate-900 text-white px-6 py-3 rounded-full hover:bg-slate-700 transition-colors shadow-sm disabled:bg-slate-400 flex items-center justify-center font-semibold"
                 >
                   {submitLoading ? 'Bezig...' : 'Aanmelden'}
                 </button>
@@ -775,9 +775,12 @@ export default function Home() {
 
             {/* Andere kaarten kunnen hieronder worden geplaatst */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              {/* Website Generator (tijdelijk uitgeschakeld) */}
-              <div className="bg-white/70 backdrop-blur-sm p-6 rounded-3xl shadow-[0_4px_20px_rgb(0,0,0,0.02)] border border-slate-200/60 transition-all duration-300 flex gap-4 opacity-50 cursor-not-allowed">
-                <div className="shrink-0 w-12 h-12 bg-amber-50 rounded-2xl flex items-center justify-center text-amber-500 border border-amber-100">
+              {/* Website Builder */}
+              <Link
+                href="/builder"
+                className="group bg-white/70 backdrop-blur-sm p-6 rounded-3xl shadow-[0_4px_20px_rgb(0,0,0,0.02)] border border-slate-200/60 hover:-translate-y-1 hover:shadow-[0_12px_30px_rgb(0,0,0,0.06)] hover:border-orange-200 hover:bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-500/50 transition-all duration-300 flex gap-4"
+              >
+                <div className="shrink-0 w-12 h-12 bg-orange-50 rounded-2xl flex items-center justify-center text-orange-500 border border-orange-100">
                   <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
                     <rect width="18" height="18" x="3" y="3" rx="2" />
                     <path d="M3 9h18" /><path d="M9 21V9" />
@@ -785,9 +788,13 @@ export default function Home() {
                 </div>
                 <div>
                   <h3 className="text-lg font-bold text-slate-800 mb-1.5">Website Builder</h3>
-                  <p className="text-slate-600 text-sm leading-relaxed">Genereer direct complete websites met AI.</p>
+                  <p className="text-slate-600 text-sm leading-relaxed">Genereer direct een complete website met AI. Je eerste website is gratis.</p>
+                  <span className="mt-2 inline-flex items-center gap-1 text-sm font-semibold text-orange-600">
+                    Probeer gratis
+                    <span aria-hidden="true" className="transition-transform group-hover:translate-x-0.5">→</span>
+                  </span>
                 </div>
-              </div>
+              </Link>
               {/* Onafhankelijk */}
               <div className="bg-white/70 backdrop-blur-sm p-6 rounded-3xl shadow-[0_4px_20px_rgb(0,0,0,0.02)] border border-slate-200/60 hover:-translate-y-1 hover:shadow-[0_12px_30px_rgb(0,0,0,0.06)] hover:border-slate-350 hover:bg-white transition-all duration-300 flex gap-4">
                 <div className="shrink-0 w-12 h-12 bg-indigo-50 rounded-2xl flex items-center justify-center text-indigo-500 border border-indigo-100">
@@ -803,22 +810,6 @@ export default function Home() {
             </div>
           </div>
         )}
-
-        {/* Footer / Links */}
-        <div className="flex flex-wrap justify-center gap-8 text-sm text-slate-500 mt-8 font-semibold">
-          <Link href="/privacy-policy" className="hover:text-orange-600 transition-colors">
-            Privacybeleid
-          </Link>
-          <Link href="/cookie-policy" className="hover:text-orange-600 transition-colors">
-            Cookiebeleid
-          </Link>
-          <Link href="/algemene-voorwaarden" className="hover:text-orange-600 transition-colors">
-            Algemene voorwaarden
-          </Link>
-          <Link href="/builder" className="hover:text-orange-600 transition-colors">
-            Website Builder
-          </Link>
-        </div>
 
         <section
           aria-label="PSA"
