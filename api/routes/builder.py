@@ -17,6 +17,7 @@ import httpx
 from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel, EmailStr, Field
 
+from api.disposable_domains import is_disposable_email
 from api.email_utils import send_email
 from api.routes.website_generator import WebsiteGeneratorService
 
@@ -338,6 +339,30 @@ def _get_session_account(request: Request) -> sqlite3.Row:
         connection.close()
 
 
+def _require_same_origin(request: Request) -> None:
+    """Reject browser requests that come from another site (CSRF defence in depth).
+
+    Browsers send an Origin header on POST requests; requests without one (server
+    to server, tests) are left to the SameSite cookie protection.
+    """
+    origin = request.headers.get("origin", "").strip()
+    public_url = os.getenv("BUILDER_PUBLIC_URL", "").strip().rstrip("/")
+    if not origin or not public_url:
+        return
+    allowed = set()
+    parsed = urlsplit(public_url)
+    if parsed.hostname:
+        host = parsed.hostname.lower()
+        bare = host[4:] if host.startswith("www.") else host
+        for candidate in (bare, f"www.{bare}"):
+            allowed.add(f"{parsed.scheme}://{candidate}")
+    for extra in os.getenv("BUILDER_ALLOWED_ORIGINS", "").split(","):
+        if extra.strip():
+            allowed.add(extra.strip().rstrip("/").lower())
+    if origin.lower().rstrip("/") not in allowed:
+        raise HTTPException(status_code=403, detail="Verzoek van een onbekende website geweigerd.")
+
+
 def _public_url() -> str:
     value = os.getenv("BUILDER_PUBLIC_URL", "").strip().rstrip("/")
     if not value:
@@ -516,8 +541,14 @@ def _finish_usage(usage_id: str, refund: bool) -> None:
 
 @router.post("/auth/request-verification")
 async def request_verification(payload: VerificationRequest, request: Request) -> dict[str, str]:
+    _require_same_origin(request)
     public_url = _public_url()
     email = str(payload.email).strip().lower()
+    if is_disposable_email(email):
+        raise HTTPException(
+            status_code=400,
+            detail="Tijdelijke of wegwerp-e-mailadressen worden niet geaccepteerd. Gebruik je vaste e-mailadres.",
+        )
     client_ip = _client_ip(request)
     await _verify_captcha(payload.captcha_token, client_ip)
     keys = {"verify-ip": client_ip, "verify-email": normalize_email(email), "verify-global": "all"}
@@ -578,6 +609,7 @@ async def verify_email(
     request: Request,
     response: Response,
 ) -> dict[str, str]:
+    _require_same_origin(request)
     token = payload.token
     if len(token) > 128:
         raise HTTPException(status_code=400, detail="Verificatielink is ongeldig of verlopen.")
@@ -666,6 +698,7 @@ async def get_account(request: Request) -> dict:
 
 @router.post("/auth/logout")
 async def logout(request: Request, response: Response) -> dict[str, str]:
+    _require_same_origin(request)
     token = request.cookies.get(SESSION_COOKIE, "")
     if token:
         connection = _connect()
@@ -678,8 +711,24 @@ async def logout(request: Request, response: Response) -> dict[str, str]:
     return {"message": "Je bent afgemeld."}
 
 
+@router.post("/auth/logout-all")
+async def logout_all(request: Request, response: Response) -> dict[str, str]:
+    """End every session of this account, e.g. after a lost or shared device."""
+    _require_same_origin(request)
+    account = _get_session_account(request)
+    connection = _connect()
+    try:
+        connection.execute("DELETE FROM builder_sessions WHERE account_id = ?", (account["id"],))
+        connection.commit()
+    finally:
+        connection.close()
+    response.delete_cookie(SESSION_COOKIE, path="/api/builder")
+    return {"message": "Je bent op alle apparaten afgemeld."}
+
+
 @router.post("/checkout")
 async def create_checkout(request: Request, payload: CheckoutRequest | None = None) -> dict[str, str]:
+    _require_same_origin(request)
     account = _get_session_account(request)
     if not payload or not payload.accept_terms or not payload.waive_withdrawal:
         raise HTTPException(
@@ -890,6 +939,7 @@ async def _send_purchase_confirmation(email: str, payment_id: str, order_id: str
 
 @router.post("/generate")
 async def generate(payload: WebsiteRequest, request: Request) -> dict:
+    _require_same_origin(request)
     account = _get_session_account(request)
     usage_id, _ = _reserve_usage(account["id"], _client_ip(request))
     try:

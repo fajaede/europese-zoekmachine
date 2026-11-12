@@ -229,6 +229,72 @@ class BuilderTests(unittest.TestCase):
         self.assertEqual(turnstile_calls[0]["secret"], "test-secret")
         self.assertEqual(send_email_mock.call_count, 1)
 
+    def test_disposable_email_domains_are_blocked(self):
+        from api.disposable_domains import is_disposable_email
+
+        self.assertTrue(is_disposable_email("x@mailinator.com"))
+        self.assertTrue(is_disposable_email("x@sub.yopmail.com"))
+        self.assertFalse(is_disposable_email("x@gmail.com"))
+        self.assertFalse(is_disposable_email("x@fajaede.nl"))
+        with patch.dict(os.environ, {"BUILDER_BLOCKED_EMAIL_DOMAINS": "spam.example, @junk.test"}):
+            self.assertTrue(is_disposable_email("x@junk.test"))
+            self.assertTrue(is_disposable_email("x@spam.example"))
+
+        app = FastAPI()
+        app.include_router(builder.router, prefix="/api/builder")
+        with (
+            TestClient(app) as client,
+            patch.object(builder, "send_email") as send_email_mock,
+            patch.dict(os.environ, {"BUILDER_PUBLIC_URL": "https://fajaede.eu"}),
+        ):
+            response = client.post(
+                "/api/builder/auth/request-verification",
+                json={"email": "someone@yopmail.com"},
+            )
+        self.assertEqual(response.status_code, 400)
+        send_email_mock.assert_not_called()
+
+    def test_cross_site_requests_are_rejected_and_logout_all_ends_sessions(self):
+        app = FastAPI()
+        app.include_router(builder.router, prefix="/api/builder")
+        connection = builder._connect()
+        for token in ("phone-session", "laptop-session"):
+            connection.execute(
+                "INSERT INTO builder_sessions (token_hash, account_id, expires_at) VALUES (?, ?, ?)",
+                (builder._hash(token), "account-1", int(time.time()) + 3600),
+            )
+        connection.commit()
+        connection.close()
+
+        with (
+            TestClient(app) as client,
+            patch.dict(os.environ, {"BUILDER_PUBLIC_URL": "https://fajaede.eu"}),
+        ):
+            client.cookies.set(builder.SESSION_COOKIE, "phone-session")
+            foreign = client.post(
+                "/api/builder/generate",
+                json={"industry": "horeca", "style": "modern", "description": "Een gezellig restaurant."},
+                headers={"origin": "https://evil.example"},
+            )
+            self.assertEqual(foreign.status_code, 403)
+
+            logout_all = client.post(
+                "/api/builder/auth/logout-all",
+                headers={"origin": "https://www.fajaede.eu"},
+            )
+            self.assertEqual(logout_all.status_code, 200)
+
+        connection = builder._connect()
+        remaining = connection.execute(
+            "SELECT COUNT(*) AS n FROM builder_sessions WHERE account_id = 'account-1'"
+        ).fetchone()["n"]
+        free_used = connection.execute(
+            "SELECT free_used FROM builder_accounts WHERE id = 'account-1'"
+        ).fetchone()["free_used"]
+        connection.close()
+        self.assertEqual(remaining, 0)
+        self.assertEqual(free_used, 0)  # the rejected request did not consume anything
+
     def test_normalize_email_merges_common_variants(self):
         n = builder.normalize_email
         self.assertEqual(n("Naam+promo@Gmail.com"), "naam@gmail.com")

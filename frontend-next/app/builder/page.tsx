@@ -237,10 +237,19 @@ export default function BuilderPage() {
     }
   }
 
-  async function handleLogout() {
-    await fetch('/api/builder/auth/logout', { method: 'POST' });
+  async function handleLogout(everywhere = false) {
+    if (everywhere && !window.confirm('Op alle apparaten afmelden? Je tegoed blijft bewaard; je logt daarna opnieuw in via je e-mail.')) {
+      return;
+    }
+    setAccountError(null);
+    const response = await fetch(everywhere ? '/api/builder/auth/logout-all' : '/api/builder/auth/logout', { method: 'POST' });
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}));
+      setAccountError(data.detail || 'Afmelden is mislukt.');
+      return;
+    }
     setAccount((current) => current ? { ...current, authenticated: false, email: undefined, credits: 0, free_available: false } : current);
-    setAccountMessage('Je bent afgemeld.');
+    setAccountMessage(everywhere ? 'Je bent op alle apparaten afgemeld. Je tegoed blijft bewaard.' : 'Je bent afgemeld.');
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -416,10 +425,17 @@ export default function BuilderPage() {
                   </button>
                   <button
                     type="button"
-                    onClick={handleLogout}
+                    onClick={() => void handleLogout()}
                     className="rounded-full border border-slate-300 px-5 py-2.5 text-sm font-semibold text-slate-600 transition-colors hover:bg-slate-50"
                   >
                     Afmelden
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void handleLogout(true)}
+                    className="rounded-full px-3 py-2.5 text-xs font-semibold text-slate-500 underline transition-colors hover:text-slate-800"
+                  >
+                    Overal afmelden
                   </button>
                 </div>
                 </div>
