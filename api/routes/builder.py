@@ -39,6 +39,12 @@ MOLLIE_API_BASE = "https://api.mollie.com/v2"
 
 
 TURNSTILE_VERIFY_URL = "https://challenges.cloudflare.com/turnstile/v0/siteverify"
+TERMS_VERSION = "2026-11-12"
+
+
+class CheckoutRequest(BaseModel):
+    accept_terms: bool = False
+    waive_withdrawal: bool = False
 
 
 class VerificationRequest(BaseModel):
@@ -125,6 +131,12 @@ def init_builder_storage() -> None:
                 ON builder_payments(account_id, created_at);
             """
         )
+        payment_columns = {
+            row["name"] for row in connection.execute("PRAGMA table_info(builder_payments)")
+        }
+        for column, definition in (("terms_version", "TEXT"), ("consent_at", "INTEGER")):
+            if column not in payment_columns:
+                connection.execute(f"ALTER TABLE builder_payments ADD COLUMN {column} {definition}")
         now = int(time.time())
         stale_before = now - 15 * 60
         connection.execute("BEGIN IMMEDIATE")
@@ -605,8 +617,16 @@ async def logout(request: Request, response: Response) -> dict[str, str]:
 
 
 @router.post("/checkout")
-async def create_checkout(request: Request) -> dict[str, str]:
+async def create_checkout(request: Request, payload: CheckoutRequest | None = None) -> dict[str, str]:
     account = _get_session_account(request)
+    if not payload or not payload.accept_terms or not payload.waive_withdrawal:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Ga akkoord met de algemene voorwaarden en met directe levering "
+                "(verlies van herroepingsrecht) om credits te kopen."
+            ),
+        )
     config = _mollie_config()
     if not config:
         raise HTTPException(
@@ -624,10 +644,20 @@ async def create_checkout(request: Request) -> dict[str, str]:
         connection.execute(
             """
             INSERT INTO builder_payments
-                (order_id, account_id, credits, amount, mode, status, created_at)
-            VALUES (?, ?, ?, ?, ?, 'creating', ?)
+                (order_id, account_id, credits, amount, mode, status, created_at,
+                 terms_version, consent_at)
+            VALUES (?, ?, ?, ?, ?, 'creating', ?, ?, ?)
             """,
-            (order_id, account["id"], CREDIT_PACK_SIZE, CREDIT_PACK_PRICE, mode, now),
+            (
+                order_id,
+                account["id"],
+                CREDIT_PACK_SIZE,
+                CREDIT_PACK_PRICE,
+                mode,
+                now,
+                TERMS_VERSION,
+                now,
+            ),
         )
         connection.commit()
     finally:
@@ -734,12 +764,18 @@ async def mollie_webhook(request: Request) -> dict[str, str]:
 
         status = payment.get("status", "unknown")
         granted_at = order["granted_at"]
+        confirmation_email = None
         if status == "paid" and not granted_at:
             connection.execute(
                 "UPDATE builder_accounts SET credits = credits + ? WHERE id = ?",
                 (CREDIT_PACK_SIZE, order["account_id"]),
             )
             granted_at = int(time.time())
+            buyer = connection.execute(
+                "SELECT email FROM builder_accounts WHERE id = ?",
+                (order["account_id"],),
+            ).fetchone()
+            confirmation_email = buyer["email"] if buyer else None
         connection.execute(
             """
             UPDATE builder_payments SET mollie_id = ?, status = ?, granted_at = ?
@@ -753,7 +789,41 @@ async def mollie_webhook(request: Request) -> dict[str, str]:
         raise
     finally:
         connection.close()
+
+    if confirmation_email:
+        await _send_purchase_confirmation(confirmation_email, payment_id, order_id)
     return {"status": "ok"}
+
+
+async def _send_purchase_confirmation(email: str, payment_id: str, order_id: str) -> None:
+    """Confirm the purchase and the withdrawal waiver on a durable medium (best effort)."""
+    try:
+        public_url = _public_url()
+    except HTTPException:
+        public_url = "https://www.fajaede.eu"
+    body = (
+        "Bedankt voor je aankoop bij fajaede Builder.\n\n"
+        f"Product: {CREDIT_PACK_SIZE} credits voor fajaede Builder\n"
+        f"Bedrag: EUR {CREDIT_PACK_PRICE.replace('.', ',')} (inclusief btw)\n"
+        f"Bestelnummer: {order_id}\n"
+        f"Mollie-betaling: {payment_id}\n\n"
+        "De credits zijn direct aan je account toegevoegd.\n\n"
+        "Je hebt vóór de betaling uitdrukkelijk ingestemd met directe levering van deze "
+        "digitale inhoud en erkend dat je daardoor je herroepingsrecht verliest "
+        "(art. VI.53, 13° Wetboek van economisch recht).\n\n"
+        f"Algemene voorwaarden (versie {TERMS_VERSION}): {public_url}/algemene-voorwaarden\n\n"
+        "fajaedeAI+ - Lodewijk de Koninckstraat 31, 2600 Berchem, België - BE1032407424\n"
+    )
+    try:
+        await asyncio.to_thread(
+            send_email,
+            "Bevestiging van je aankoop: 10 credits fajaede Builder",
+            email,
+            body,
+        )
+    except (OSError, RuntimeError, ValueError):
+        # Credits are already granted; never fail the webhook over the email.
+        logger.exception("Could not send purchase confirmation for order %s", order_id)
 
 
 @router.post("/generate")

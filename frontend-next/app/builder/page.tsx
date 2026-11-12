@@ -77,6 +77,8 @@ export default function BuilderPage() {
   const [accountMessage, setAccountMessage] = useState('');
   const [accountError, setAccountError] = useState<string | null>(null);
   const [checkoutLoading, setCheckoutLoading] = useState(false);
+  const [acceptTerms, setAcceptTerms] = useState(false);
+  const [waiveWithdrawal, setWaiveWithdrawal] = useState(false);
   const [captchaToken, setCaptchaToken] = useState('');
   const captchaContainerRef = useRef<HTMLDivElement | null>(null);
   const captchaWidgetIdRef = useRef<string | null>(null);
@@ -211,10 +213,18 @@ export default function BuilderPage() {
   }
 
   async function handleCheckout() {
+    if (!acceptTerms || !waiveWithdrawal) {
+      setAccountError('Vink eerst beide verklaringen aan om credits te kopen.');
+      return;
+    }
     setCheckoutLoading(true);
     setAccountError(null);
     try {
-      const response = await fetch('/api/builder/checkout', { method: 'POST' });
+      const response = await fetch('/api/builder/checkout', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ accept_terms: acceptTerms, waive_withdrawal: waiveWithdrawal }),
+      });
       const data = await response.json();
       if (!response.ok) {
         throw new Error(data.detail || 'De betaling kon niet worden gestart.');
@@ -360,11 +370,46 @@ export default function BuilderPage() {
                       : `${account.credits} ${account.credits === 1 ? 'credit' : 'credits'} beschikbaar.`}
                   </p>
                 </div>
+                <div className="flex flex-col gap-3 sm:max-w-md">
+                  <label className="flex items-start gap-2 text-xs leading-relaxed text-slate-600">
+                    <input
+                      type="checkbox"
+                      checked={acceptTerms}
+                      onChange={(event) => setAcceptTerms(event.target.checked)}
+                      className="mt-0.5 h-4 w-4 shrink-0 accent-orange-500"
+                    />
+                    <span>
+                      Ik ga akkoord met de{' '}
+                      <Link href="/algemene-voorwaarden" target="_blank" className="font-semibold text-orange-600 underline">
+                        algemene voorwaarden
+                      </Link>{' '}
+                      en het{' '}
+                      <Link href="/privacy-policy" target="_blank" className="font-semibold text-orange-600 underline">
+                        privacybeleid
+                      </Link>
+                      .
+                    </span>
+                  </label>
+                  <label className="flex items-start gap-2 text-xs leading-relaxed text-slate-600">
+                    <input
+                      type="checkbox"
+                      checked={waiveWithdrawal}
+                      onChange={(event) => setWaiveWithdrawal(event.target.checked)}
+                      className="mt-0.5 h-4 w-4 shrink-0 accent-orange-500"
+                    />
+                    <span>
+                      Ik wil dat de credits direct na betaling worden geleverd en erken dat ik daardoor mijn{' '}
+                      <Link href="/algemene-voorwaarden#herroeping" target="_blank" className="font-semibold text-orange-600 underline">
+                        herroepingsrecht
+                      </Link>{' '}
+                      verlies.
+                    </span>
+                  </label>
                 <div className="flex flex-wrap gap-3">
                   <button
                     type="button"
                     onClick={handleCheckout}
-                    disabled={!account.checkout_available || checkoutLoading}
+                    disabled={!account.checkout_available || checkoutLoading || !acceptTerms || !waiveWithdrawal}
                     className="rounded-full bg-slate-900 px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-slate-700 disabled:cursor-not-allowed disabled:bg-slate-300"
                   >
                     {checkoutLoading ? 'Bezig met openen…' : 'Koop 10 credits · €5,00'}
@@ -376,6 +421,7 @@ export default function BuilderPage() {
                   >
                     Afmelden
                   </button>
+                </div>
                 </div>
               </div>
             ) : verificationToken ? (

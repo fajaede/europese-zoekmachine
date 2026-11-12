@@ -812,9 +812,12 @@ export default function Home() {
           <Link href="/cookie-policy" className="hover:text-orange-600 transition-colors">
             Cookiebeleid
           </Link>
-          <span className="text-slate-400 cursor-not-allowed">
-            Website Generator
-          </span>
+          <Link href="/algemene-voorwaarden" className="hover:text-orange-600 transition-colors">
+            Algemene voorwaarden
+          </Link>
+          <Link href="/builder" className="hover:text-orange-600 transition-colors">
+            Website Builder
+          </Link>
         </div>
 
         <section

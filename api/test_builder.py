@@ -284,7 +284,17 @@ class BuilderTests(unittest.TestCase):
             ),
         ):
             client.cookies.set(builder.SESSION_COOKIE, session_token)
-            response = client.post("/api/builder/checkout")
+            without_consent = client.post("/api/builder/checkout")
+            partial_consent = client.post(
+                "/api/builder/checkout",
+                json={"accept_terms": True, "waive_withdrawal": False},
+            )
+            response = client.post(
+                "/api/builder/checkout",
+                json={"accept_terms": True, "waive_withdrawal": True},
+            )
+        self.assertEqual(without_consent.status_code, 400)
+        self.assertEqual(partial_consent.status_code, 400)
         self.assertEqual(response.status_code, 503)
         self.assertIn("Mollie", response.json()["detail"])
 
@@ -342,9 +352,15 @@ class BuilderTests(unittest.TestCase):
         with (
             patch.object(builder, "_mollie_config", return_value=("test", "test_key")),
             patch.object(builder.httpx, "AsyncClient", FakeMollieClient),
+            patch.object(builder, "send_email") as send_email_mock,
         ):
             asyncio.run(builder.mollie_webhook(request))
             asyncio.run(builder.mollie_webhook(request))
+
+        # Exactly one purchase confirmation, recording the withdrawal waiver.
+        self.assertEqual(send_email_mock.call_count, 1)
+        self.assertEqual(send_email_mock.call_args.args[1], "builder@example.test")
+        self.assertIn("herroepingsrecht", send_email_mock.call_args.args[2])
 
         connection = builder._connect()
         credits = connection.execute(
