@@ -9,7 +9,8 @@ Een API waarmee developers zich kunnen registreren met hun email om een API key 
 ✅ **Email Registratie** - Developers registreren met email → krijgen API key  
 ✅ **API Key Authenticatie** - Beveiligde endpoints met X-API-Key header  
 ✅ **SEO Generatie** - Genereer SEO titles, descriptions en keywords met AI  
-✅ **Rate Limiting** - 100 requests per dag per developer  
+✅ **Rate Limiting** - Free 100, Pro 2.000, Premium 10.000 requests per dag  
+✅ **Pro/Premium-passen** - Prepaid via Mollie (30 of 90 dagen, geen automatische verlenging)  
 ✅ **Usage Tracking** - Houd bij hoeveel requests elke developer maakt  
 ✅ **Developer Dashboard** - HTML pagina met documentatie en voorbeelden  
 
@@ -188,6 +189,23 @@ curl -X POST https://api.fajaede.eu/api/developers/seo/generate \
   }'
 ```
 
+### 6. Pakketten en betalen
+```bash
+GET  /api/developers/plans              # prijzen en limieten
+POST /api/developers/checkout           # X-API-Key + {"plan": "pro"|"premium", "days": 30|90, "accept_terms": true, "immediate_start": true}
+POST /api/developers/payments/webhook   # alleen voor Mollie
+```
+
+| Pakket  | Requests/dag | 30 dagen | 90 dagen |
+|---------|--------------|----------|----------|
+| Free    | 100          | gratis   | gratis   |
+| Pro     | 2.000        | €9       | €24      |
+| Premium | 10.000       | €29      | €79      |
+
+Passen worden niet automatisch verlengd. Dezelfde pas opnieuw kopen telt dagen op; een upgrade Pro → Premium zet resterende Pro-dagen naar prijsverhouding om. Downgraden kan pas na afloop. Een key-rotatie behoudt de pas. Daglimieten zijn instelbaar met `DEVELOPER_PRO_DAILY_LIMIT` en `DEVELOPER_PREMIUM_DAILY_LIMIT`.
+
+Gebruikt dezelfde `MOLLIE_API_KEY` en `MOLLIE_MODE` als de builder. De webhook is standaard `${DEVELOPER_VERIFICATION_BASE_URL}/api/developers/payments/webhook` (overschrijfbaar met `DEVELOPER_WEBHOOK_URL`); hij wordt per betaling meegestuurd, dus in het Mollie-dashboard hoeft niets ingesteld te worden.
+
 ## Database Schema
 
 ### api_keys tabel
@@ -209,9 +227,8 @@ curl -X POST https://api.fajaede.eu/api/developers/seo/generate \
 ## Next Steps
 
 1. **API Key Management** - Voeg een authenticated revoke endpoint toe
-2. **Betaalde Tiers** - Hogere limieten voor betalende developers
-3. **Analytics Dashboard** - Toon graphs van API usage
-4. **Documentation Site** - Volledige API docs met Swagger
+2. **Analytics Dashboard** - Toon graphs van API usage
+3. **Documentation Site** - Volledige API docs met Swagger
 
 ---
 

@@ -1,7 +1,10 @@
 """Developer API met email registratie en SEO generatie."""
 import asyncio
 import html
+import logging
+import re
 import sqlite3
+import uuid
 import secrets
 import hashlib
 import time
@@ -11,10 +14,34 @@ from urllib.parse import parse_qs, urlsplit
 from fastapi import APIRouter, HTTPException, Header, Request, Response
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, EmailStr, Field
+import httpx
+from api.disposable_domains import is_disposable_email
 from api.email_utils import send_email
 import os
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
+
+MOLLIE_API_BASE = "https://api.mollie.com/v2"
+TERMS_VERSION = "2026-11-12"
+FREE_DAILY_LIMIT = 100
+
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        return max(1, int(os.getenv(name, str(default))))
+    except ValueError:
+        return default
+
+
+# Prepaid passes: one-off Mollie payment, never renewed automatically.
+PLANS = {
+    "pro": {"name": "Pro", "daily_limit": _env_int("DEVELOPER_PRO_DAILY_LIMIT", 2000),
+            "prices": {30: "9.00", 90: "24.00"}},
+    "premium": {"name": "Premium", "daily_limit": _env_int("DEVELOPER_PREMIUM_DAILY_LIMIT", 10000),
+                "prices": {30: "29.00", 90: "79.00"}},
+}
+PLAN_RANK = {"free": 0, "pro": 1, "premium": 2}
 
 DB_PATH = os.getenv(
     "DEVELOPER_KEYS_DB_PATH",
@@ -60,9 +87,55 @@ def init_db():
         intent TEXT NOT NULL CHECK(intent IN ('create', 'rotate')),
         expires_at INTEGER NOT NULL
     )""")
+    cursor.execute("""CREATE TABLE IF NOT EXISTS developer_payments (
+        order_id TEXT PRIMARY KEY,
+        key_id INTEGER NOT NULL,
+        plan TEXT NOT NULL,
+        days INTEGER NOT NULL,
+        amount TEXT NOT NULL,
+        mode TEXT NOT NULL,
+        mollie_id TEXT UNIQUE,
+        status TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        granted_at INTEGER,
+        terms_version TEXT,
+        consent_at INTEGER
+    )""")
+    columns = {row[1] for row in cursor.execute("PRAGMA table_info(api_keys)")}
+    if "plan" not in columns:
+        cursor.execute("ALTER TABLE api_keys ADD COLUMN plan TEXT NOT NULL DEFAULT 'free'")
+    if "plan_expires_at" not in columns:
+        cursor.execute("ALTER TABLE api_keys ADD COLUMN plan_expires_at INTEGER NOT NULL DEFAULT 0")
     conn.commit()
     conn.close()
     print("Developer database geinitieerd")
+
+
+def active_plan(row) -> tuple[str, int]:
+    """Return (plan, expires_at); an expired pass falls back to free."""
+    keys = row.keys()
+    plan = row["plan"] if "plan" in keys else "free"
+    expires_at = int(row["plan_expires_at"] or 0) if "plan_expires_at" in keys else 0
+    if plan in PLANS and expires_at > int(time.time()):
+        return plan, expires_at
+    return "free", 0
+
+
+def effective_daily_limit(row) -> int:
+    plan, _ = active_plan(row)
+    return PLANS[plan]["daily_limit"] if plan in PLANS else FREE_DAILY_LIMIT
+
+
+def extend_plan(current_plan: str, current_expires: int, new_plan: str, days: int, now: int) -> int:
+    """New expiry: the same plan stacks; an upgrade credits leftover lower-tier time pro rata."""
+    seconds = days * 86400
+    if current_plan == new_plan and current_expires > now:
+        return current_expires + seconds
+    if current_plan in PLANS and current_expires > now:
+        old_price = float(PLANS[current_plan]["prices"][30])
+        new_price = float(PLANS[new_plan]["prices"][30])
+        return now + seconds + int((current_expires - now) * old_price / new_price)
+    return now + seconds
 
 class RegisterRequest(BaseModel):
     email: EmailStr
@@ -104,6 +177,15 @@ class UsageResponse(BaseModel):
     requests_today: int
     total_requests: int
     created_at: str
+    plan: str = "free"
+    plan_expires_at: Optional[int] = None
+
+
+class DeveloperCheckoutRequest(BaseModel):
+    plan: str = Field(pattern=r"^(pro|premium)$")
+    days: int
+    accept_terms: bool = False
+    immediate_start: bool = False
 
 def generate_api_key() -> str:
     return f"sk_eu_{secrets.token_urlsafe(24)}"
@@ -276,6 +358,11 @@ async def register_developer(request: RegisterRequest, http_request: Request):
         raise HTTPException(status_code=429, detail="Te veel registraties vanaf dit netwerk. Probeer het later opnieuw.")
 
     normalized_email = str(request.email).strip().lower()
+    if is_disposable_email(normalized_email):
+        raise HTTPException(
+            status_code=400,
+            detail="Gebruik een permanent e-mailadres; wegwerpadressen worden niet geaccepteerd.",
+        )
     try:
         token = create_verification(normalized_email, request.project_name)
         verification_url = f"{_verification_base_url()}/api/developers/verify?token={token}"
@@ -347,15 +434,19 @@ async def verify_developer_email(request: Request):
         api_key=api_key,
         email=email_address,
         project_name=project_name,
-        daily_limit=100,
+        daily_limit=FREE_DAILY_LIMIT,
         message="E-mailadres bevestigd. Bewaar deze API-key; hij wordt niet opnieuw getoond.",
     )
 
 @router.post("/seo/generate", response_model=SEOGenerateResponse)
 async def generate_seo(request: SEOGenerateRequest, x_api_key: str = Header(..., alias="X-API-Key")):
     user = validate_api_key(x_api_key)
-    if not consume_rate_limit(x_api_key, user['daily_limit']):
-        raise HTTPException(status_code=429, detail=f"Daily limit bereikt ({user['daily_limit']} requests)")
+    daily_limit = effective_daily_limit(user)
+    if not consume_rate_limit(x_api_key, daily_limit):
+        raise HTTPException(
+            status_code=429,
+            detail=f"Daglimiet bereikt ({daily_limit} requests). Upgrade naar Pro of Premium via /developers.",
+        )
     try:
         from openai import AsyncOpenAI
         client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
@@ -380,6 +471,248 @@ async def get_usage(x_api_key: str = Header(..., alias="X-API-Key")):
     cursor.execute("SELECT request_count FROM rate_limits WHERE api_key = ? AND date = ?", (x_api_key, today))
     row = cursor.fetchone()
     conn.close()
-    return UsageResponse(email=user['email'], project_name=user['project_name'], daily_limit=user['daily_limit'], requests_today=row[0] if row else 0, total_requests=user['request_count'], created_at=user['created_at'])
+    plan, expires_at = active_plan(user)
+    return UsageResponse(
+        email=user['email'],
+        project_name=user['project_name'],
+        daily_limit=effective_daily_limit(user),
+        requests_today=row[0] if row else 0,
+        total_requests=user['request_count'],
+        created_at=user['created_at'],
+        plan=plan,
+        plan_expires_at=expires_at or None,
+    )
+
+
+@router.get("/plans")
+async def list_plans() -> dict:
+    plans = {"free": {"name": "Free", "daily_limit": FREE_DAILY_LIMIT, "prices": {}}}
+    for key, plan in PLANS.items():
+        plans[key] = {
+            "name": plan["name"],
+            "daily_limit": plan["daily_limit"],
+            "prices": {str(days): price for days, price in plan["prices"].items()},
+        }
+    return {"plans": plans, "auto_renew": False, "terms_version": TERMS_VERSION}
+
+
+def _mollie_config() -> tuple[str, str, str, str] | None:
+    """Return (mode, api_key, webhook_url, public_base), or None when not safely configured."""
+    mode = os.getenv("MOLLIE_MODE", "test").strip().lower()
+    api_key = os.getenv("MOLLIE_API_KEY", "").strip()
+    if mode not in {"test", "live"} or not api_key.startswith(f"{mode}_"):
+        return None
+    try:
+        public_base = _verification_base_url()
+    except RuntimeError:
+        return None
+    webhook_url = (
+        os.getenv("DEVELOPER_WEBHOOK_URL", "").strip()
+        or f"{public_base}/api/developers/payments/webhook"
+    )
+    parsed = urlsplit(webhook_url)
+    if (
+        parsed.scheme != "https"
+        or not parsed.hostname
+        or parsed.username
+        or parsed.password
+        or parsed.query
+        or parsed.fragment
+    ):
+        return None
+    return mode, api_key, webhook_url, public_base
+
+
+def _delete_order(order_id: str) -> None:
+    conn = get_db()
+    try:
+        conn.execute("DELETE FROM developer_payments WHERE order_id = ?", (order_id,))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+@router.post("/checkout")
+async def create_developer_checkout(
+    payload: DeveloperCheckoutRequest,
+    x_api_key: str = Header(..., alias="X-API-Key"),
+) -> dict[str, str]:
+    user = validate_api_key(x_api_key)
+    plan = PLANS.get(payload.plan)
+    if not plan or payload.days not in plan["prices"]:
+        raise HTTPException(status_code=400, detail="Kies Pro of Premium voor 30 of 90 dagen.")
+    if not payload.accept_terms or not payload.immediate_start:
+        raise HTTPException(
+            status_code=400,
+            detail="Ga akkoord met de algemene voorwaarden en vraag uitdrukkelijk om directe start van de pas.",
+        )
+    current_plan, current_expires = active_plan(user)
+    if PLAN_RANK[current_plan] > PLAN_RANK[payload.plan]:
+        until = datetime.fromtimestamp(current_expires).strftime("%d-%m-%Y")
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Je {PLANS[current_plan]['name']}-pas loopt nog tot {until}. "
+                "Verleng die pas, of kies na afloop een ander pakket."
+            ),
+        )
+    config = _mollie_config()
+    if not config:
+        raise HTTPException(status_code=503, detail="Betalingen zijn nog niet ingesteld. Probeer het later opnieuw.")
+    mode, mollie_key, webhook_url, public_base = config
+    amount = plan["prices"][payload.days]
+    order_id = str(uuid.uuid4())
+    now = int(time.time())
+
+    conn = get_db()
+    try:
+        conn.execute(
+            "INSERT INTO developer_payments "
+            "(order_id, key_id, plan, days, amount, mode, status, created_at, terms_version, consent_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, 'creating', ?, ?, ?)",
+            (order_id, user["id"], payload.plan, payload.days, amount, mode, now, TERMS_VERSION, now),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    body = {
+        "amount": {"currency": "EUR", "value": amount},
+        "description": f"fajaede Developer API - {plan['name']} {payload.days} dagen",
+        "redirectUrl": f"{public_base}/developers?payment=return",
+        "webhookUrl": webhook_url,
+        "metadata": {"developer_order": order_id, "plan": payload.plan, "days": payload.days},
+    }
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            response = await client.post(
+                f"{MOLLIE_API_BASE}/payments",
+                headers={"Authorization": f"Bearer {mollie_key}"},
+                json=body,
+            )
+            response.raise_for_status()
+            payment = response.json()
+        checkout_url = payment.get("_links", {}).get("checkout", {}).get("href")
+        mollie_id = payment.get("id")
+        if not checkout_url or not mollie_id or payment.get("mode") != mode:
+            raise RuntimeError("Mollie returned an incomplete or unexpected payment.")
+    except (httpx.HTTPError, ValueError, RuntimeError):
+        _delete_order(order_id)
+        logger.exception("Could not create Mollie checkout for developer order %s", order_id)
+        raise HTTPException(status_code=502, detail="Mollie kon de betaling niet starten.") from None
+
+    conn = get_db()
+    try:
+        conn.execute(
+            "UPDATE developer_payments SET mollie_id = ?, status = ? WHERE order_id = ? AND status = 'creating'",
+            (mollie_id, payment.get("status", "open"), order_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    return {"checkout_url": checkout_url}
+
+
+@router.post("/payments/webhook")
+async def developer_mollie_webhook(request: Request) -> dict[str, str]:
+    config = _mollie_config()
+    if not config:
+        raise HTTPException(status_code=503, detail="Mollie-webhook is niet geconfigureerd.")
+    mode, mollie_key, _, _ = config
+    body = (await request.body())[:2048].decode("utf-8", errors="replace")
+    payment_id = parse_qs(body).get("id", [""])[0]
+    if not re.fullmatch(r"tr_[A-Za-z0-9]+", payment_id):
+        raise HTTPException(status_code=400, detail="Ongeldige Mollie-melding.")
+
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            response = await client.get(
+                f"{MOLLIE_API_BASE}/payments/{payment_id}",
+                headers={"Authorization": f"Bearer {mollie_key}"},
+            )
+            response.raise_for_status()
+            payment = response.json()
+    except httpx.HTTPError:
+        logger.exception("Could not verify Mollie payment %s", payment_id)
+        raise HTTPException(status_code=502, detail="Mollie-betaling kon niet worden geverifieerd.") from None
+
+    metadata = payment.get("metadata") or {}
+    order_id = metadata.get("developer_order")
+    if payment.get("id") != payment_id or payment.get("mode") != mode or not isinstance(order_id, str):
+        raise HTTPException(status_code=400, detail="Betalingsgegevens komen niet overeen.")
+
+    confirmation = None
+    conn = get_db()
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        order = conn.execute("SELECT * FROM developer_payments WHERE order_id = ?", (order_id,)).fetchone()
+        plan = PLANS.get(order["plan"]) if order else None
+        if (
+            not order
+            or not plan
+            or order["mode"] != mode
+            or order["amount"] != plan["prices"].get(order["days"])
+            or payment.get("amount") != {"currency": "EUR", "value": order["amount"]}
+            or metadata.get("plan") != order["plan"]
+            or metadata.get("days") != order["days"]
+        ):
+            raise HTTPException(status_code=404, detail="Developer-bestelling niet gevonden.")
+
+        status = payment.get("status", "unknown")
+        granted_at = order["granted_at"]
+        if status == "paid" and not granted_at:
+            key_row = conn.execute("SELECT * FROM api_keys WHERE id = ?", (order["key_id"],)).fetchone()
+            if not key_row:
+                raise HTTPException(status_code=404, detail="Developer-account niet gevonden.")
+            now = int(time.time())
+            current_plan, current_expires = active_plan(key_row)
+            new_expires = extend_plan(current_plan, current_expires, order["plan"], order["days"], now)
+            conn.execute(
+                "UPDATE api_keys SET plan = ?, plan_expires_at = ? WHERE id = ?",
+                (order["plan"], new_expires, order["key_id"]),
+            )
+            granted_at = now
+            confirmation = (key_row["email"], plan, order["days"], order["amount"], new_expires)
+        conn.execute(
+            "UPDATE developer_payments SET mollie_id = ?, status = ?, granted_at = ? WHERE order_id = ?",
+            (payment_id, status, granted_at, order_id),
+        )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+    if confirmation:
+        await _send_developer_confirmation(order_id, payment_id, *confirmation)
+    return {"status": "ok"}
+
+
+async def _send_developer_confirmation(
+    order_id: str, payment_id: str, email: str, plan: dict, days: int, amount: str, expires_at: int
+) -> None:
+    """Confirm the purchase and the withdrawal waiver on a durable medium (best effort)."""
+    until = datetime.fromtimestamp(expires_at).strftime("%d-%m-%Y")
+    body = (
+        "Bedankt voor je aankoop bij de fajaede Developer API.\n\n"
+        f"Product: {plan['name']}-pas, {days} dagen ({plan['daily_limit']} requests per dag)\n"
+        f"Bedrag: EUR {amount.replace('.', ',')} (inclusief btw)\n"
+        f"Geldig tot en met: {until}\n"
+        f"Bestelnummer: {order_id}\n"
+        f"Mollie-betaling: {payment_id}\n\n"
+        "De pas is direct actief op je API-key en wordt niet automatisch verlengd.\n\n"
+        "Je hebt uitdrukkelijk gevraagd dat de pas direct start. Ben je consument, dan kun je "
+        "binnen 14 dagen na aankoop herroepen door te mailen naar info@fajaede.nl; je betaalt "
+        "dan alleen voor de dagen die al verstreken zijn (art. VI.51 Wetboek van economisch recht).\n\n"
+        f"Algemene voorwaarden (versie {TERMS_VERSION}): https://www.fajaede.eu/algemene-voorwaarden\n\n"
+        "fajaedeAI+ - Lodewijk de Koninckstraat 31, 2600 Berchem, België - BE1032407424\n"
+    )
+    try:
+        await asyncio.to_thread(send_email, f"Bevestiging: {plan['name']}-pas fajaede Developer API", email, body)
+    except (OSError, RuntimeError, ValueError):
+        # The pass is already active; never fail the webhook over the email.
+        logger.exception("Could not send developer purchase confirmation for order %s", order_id)
+
 
 init_db()

@@ -46,7 +46,7 @@ export default function AlgemeneVoorwaarden() {
       </Link>
       <h1 style={{ fontSize: 32, margin: '0 0 12px', color: '#1e293b' }}>Algemene voorwaarden</h1>
       <p style={{ color: '#64748b', marginTop: 0 }}>
-        <strong>Versie:</strong> 12 november 2026 · Van toepassing op fajaede.eu en fajaede Builder
+        <strong>Versie:</strong> 12 november 2026 · Van toepassing op fajaede.eu, fajaede Builder en de Developer API
       </p>
 
       <Section title="1. Wie zijn wij?">
@@ -67,8 +67,9 @@ export default function AlgemeneVoorwaarden() {
 
       <Section title="2. Toepassing">
         <p>
-          Deze voorwaarden gelden voor elk gebruik van fajaede.eu en voor elke aankoop van credits voor fajaede
-          Builder. Door een account te bevestigen of credits te kopen, aanvaardt u deze voorwaarden. Dwingende
+          Deze voorwaarden gelden voor elk gebruik van fajaede.eu, voor elke aankoop van credits voor fajaede
+          Builder en voor het gebruik van de Developer API, inclusief Pro- en Premium-passen. Door een account te
+          bevestigen of een aankoop te doen, aanvaardt u deze voorwaarden. Dwingende
           rechten die u als consument heeft, blijven altijd van toepassing.
         </p>
       </Section>
@@ -81,6 +82,10 @@ export default function AlgemeneVoorwaarden() {
           <li>
             <strong>fajaede Builder:</strong> een online dienst die op basis van uw omschrijving met behulp van
             kunstmatige intelligentie (AI) een HTML-website genereert, die u kunt bekijken en kopiëren.
+          </li>
+          <li>
+            <strong>Developer API:</strong> een programmeerinterface (api.fajaede.eu) die met AI SEO-metadata
+            genereert. Toegang loopt via een persoonlijke API-key die u na e-mailbevestiging ontvangt.
           </li>
         </ul>
       </Section>
@@ -107,6 +112,29 @@ export default function AlgemeneVoorwaarden() {
           </li>
           <li>Credits zijn persoonlijk, niet overdraagbaar en niet inwisselbaar voor geld.</li>
         </ul>
+        <p>
+          <strong>Developer API:</strong>
+        </p>
+        <ul>
+          <li>Free: 100 requests per dag, gratis.</li>
+          <li>
+            Pro: 2.000 requests per dag, <strong>€9,00</strong> per 30 dagen of <strong>€24,00</strong> per 90 dagen.
+          </li>
+          <li>
+            Premium: 10.000 requests per dag, <strong>€29,00</strong> per 30 dagen of <strong>€79,00</strong> per 90
+            dagen.
+          </li>
+          <li>
+            Alle prijzen zijn inclusief btw. Een pas is een eenmalige, vooraf betaalde periode en wordt nooit
+            automatisch verlengd. Een nieuwe pas van hetzelfde pakket wordt opgeteld bij de resterende dagen. Bij een
+            upgrade van Pro naar Premium worden de resterende Pro-dagen naar verhouding van de prijs omgezet in
+            Premium-dagen.
+          </li>
+          <li>
+            De daglimiet wordt elke dag opnieuw ingesteld; ongebruikte requests worden niet meegenomen. Na afloop
+            valt uw API-key terug op Free.
+          </li>
+        </ul>
       </Section>
 
       <Section title="6. Levering">
@@ -128,6 +156,13 @@ export default function AlgemeneVoorwaarden() {
           herroepingsrecht verliest (artikel VI.53, 13° van het Wetboek van economisch recht). Bij het kopen van
           credits vragen wij u deze instemming en erkenning uitdrukkelijk te geven. Omdat de credits direct na
           betaling worden geleverd, kunt u een aankoop van credits daarna niet meer herroepen.
+        </p>
+        <p>
+          Een Pro- of Premium-pas voor de Developer API is een dienst. Op uw uitdrukkelijk verzoek start de pas direct
+          na betaling. Als consument kunt u de aankoop toch binnen 14 dagen herroepen door een e-mail te sturen naar{' '}
+          <a href={`mailto:${COMPANY.email}`}>{COMPANY.email}</a>. U betaalt dan alleen een bedrag in verhouding tot
+          de dagen die al verstreken zijn; de rest betalen wij binnen 14 dagen terug (artikel VI.51 van het Wetboek
+          van economisch recht). Koopt u de pas als onderneming, dan geldt geen herroepingsrecht.
         </p>
         <p>
           Uw wettelijke rechten bij een gebrekkige dienst (zie artikel 9) blijven onverminderd van toepassing.

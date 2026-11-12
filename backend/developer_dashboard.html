@@ -206,6 +206,27 @@
             padding: 0;
             color: #e2e8f0;
         }
+        .plans-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 16px;
+            margin-top: 20px;
+        }
+        .plan-card {
+            border: 2px solid #e0e0e0;
+            border-radius: 12px;
+            padding: 20px;
+            text-align: center;
+        }
+        .plan-card h3 { color: #333; font-size: 1.4em; margin-bottom: 6px; }
+        .plan-featured { border-color: #667eea; }
+        .plan-limit { color: #666; margin-bottom: 10px !important; }
+        .plan-price { font-size: 1.8em; font-weight: 700; color: #333 !important; margin-bottom: 6px !important; }
+        .plan-price span { font-size: 0.5em; font-weight: 400; color: #666; }
+        .plan-note { font-size: 0.9em; }
+        .select { width: 100%; padding: 12px; border: 2px solid #e0e0e0; border-radius: 8px; font-size: 16px; }
+        .check { display: flex; gap: 10px; align-items: flex-start; margin-bottom: 12px; color: #444; }
+        .check input { margin-top: 5px; }
     </style>
 </head>
 <body>
@@ -292,6 +313,49 @@
                 <div class="code-box" id="codeBox"></div>
             </div>
             
+            <div class="section" id="pakketten">
+                <h2>💳 Pakketten</h2>
+                <div id="paymentReturn"></div>
+                <p>Prepaid passen: je betaalt één keer via Mollie en er wordt nooit automatisch verlengd. SEO-resultaten zie je pas na een paar maanden, daarom is de 90-dagenpas voordeliger. Een nieuwe pas van hetzelfde pakket wordt opgeteld bij je resterende dagen. Upgrade je van Pro naar Premium, dan worden je resterende Pro-dagen naar verhouding omgezet in Premium-dagen.</p>
+                <div class="plans-grid">
+                    <div class="plan-card">
+                        <h3>Free</h3>
+                        <p class="plan-limit">100 requests per dag</p>
+                        <p class="plan-price">€0</p>
+                        <p class="plan-note">Direct na e-mailbevestiging</p>
+                    </div>
+                    <div class="plan-card">
+                        <h3>Pro</h3>
+                        <p class="plan-limit">2.000 requests per dag</p>
+                        <p class="plan-price">€9 <span>/ 30 dagen</span></p>
+                        <p class="plan-note">€24 voor 90 dagen (bespaar €3)</p>
+                    </div>
+                    <div class="plan-card plan-featured">
+                        <h3>Premium</h3>
+                        <p class="plan-limit">10.000 requests per dag</p>
+                        <p class="plan-price">€29 <span>/ 30 dagen</span></p>
+                        <p class="plan-note">€79 voor 90 dagen (bespaar €8)</p>
+                    </div>
+                </div>
+                <div class="form-group" style="margin-top:24px">
+                    <label for="apiKeyBuy">Jouw API-key</label>
+                    <input type="password" id="apiKeyBuy" placeholder="sk_eu_..." autocomplete="off" />
+                </div>
+                <div class="form-group">
+                    <label for="planChoice">Pakket</label>
+                    <select id="planChoice" class="select">
+                        <option value="pro:90">Pro · 90 dagen · €24</option>
+                        <option value="pro:30">Pro · 30 dagen · €9</option>
+                        <option value="premium:90">Premium · 90 dagen · €79</option>
+                        <option value="premium:30">Premium · 30 dagen · €29</option>
+                    </select>
+                </div>
+                <label class="check"><input type="checkbox" id="acceptTerms" /> Ik ga akkoord met de <a href="https://www.fajaede.eu/algemene-voorwaarden" target="_blank" rel="noopener">algemene voorwaarden</a>.</label>
+                <label class="check"><input type="checkbox" id="immediateStart" /> Ik vraag uitdrukkelijk dat de pas direct na betaling start. Herroep ik als consument binnen 14 dagen, dan betaal ik voor de dagen die al verstreken zijn.</label>
+                <button class="btn" id="buyButton" onclick="buyPlan()">Afrekenen via Mollie</button>
+                <div id="buyResult"></div>
+            </div>
+
             <div class="section">
                 <h2>📊 Usage Statistics</h2>
                 <div class="form-group">
@@ -397,7 +461,13 @@
         function renderUsage(container, data) {
             const grid = document.createElement('div');
             grid.className = 'stats-grid';
+            const planNames = { free: 'Free', pro: 'Pro', premium: 'Premium' };
+            const until = data.plan_expires_at
+                ? new Date(data.plan_expires_at * 1000).toLocaleDateString('nl-BE')
+                : 'onbeperkt';
             const values = [
+                [planNames[data.plan] || 'Free', 'Pakket'],
+                [until, 'Geldig tot'],
                 [data.requests_today, 'Requests Vandaag'],
                 [data.daily_limit, 'Daily Limit'],
                 [data.total_requests, 'Totaal Requests'],
@@ -502,6 +572,56 @@
             }
         }
         
+        async function buyPlan() {
+            const apiKey = document.getElementById('apiKeyBuy').value.trim();
+            const [plan, days] = document.getElementById('planChoice').value.split(':');
+            const acceptTerms = document.getElementById('acceptTerms').checked;
+            const immediateStart = document.getElementById('immediateStart').checked;
+            const resultDiv = document.getElementById('buyResult');
+            const button = document.getElementById('buyButton');
+
+            if (!apiKey) {
+                renderNotice(resultDiv, 'Vul je API-key in. Nog geen key? Registreer hierboven eerst gratis.');
+                return;
+            }
+            if (!acceptTerms || !immediateStart) {
+                renderNotice(resultDiv, 'Vink beide vakjes aan om af te rekenen.');
+                return;
+            }
+
+            button.disabled = true;
+            try {
+                const response = await fetch(API_BASE + '/checkout', {
+                    method: 'POST',
+                    headers: { 'X-API-Key': apiKey, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        plan,
+                        days: Number(days),
+                        accept_terms: acceptTerms,
+                        immediate_start: immediateStart,
+                    })
+                });
+                const data = await response.json();
+                if (response.ok && typeof data.checkout_url === 'string' && data.checkout_url.startsWith('https://')) {
+                    window.location.href = data.checkout_url;
+                    return;
+                }
+                renderNotice(resultDiv, data.detail || 'Afrekenen is niet gelukt.');
+            } catch (error) {
+                renderNotice(resultDiv, error.message || 'Afrekenen is niet gelukt.');
+            }
+            button.disabled = false;
+        }
+
+        if (new URLSearchParams(window.location.search).get('payment') === 'return') {
+            renderNotice(
+                document.getElementById('paymentReturn'),
+                'Bedankt! Zodra Mollie de betaling bevestigt, is je pas actief (meestal binnen een minuut). Je ontvangt ook een bevestigingsmail. Controleer je pakket hieronder bij Usage Statistics.',
+                'success'
+            );
+            document.getElementById('pakketten').scrollIntoView();
+        }
+
         function copyScript() {
             const fullScript = '<script>\n' + INTEGRATION_SCRIPT + '\n<\/script>';
             navigator.clipboard.writeText(fullScript).then(() => {
