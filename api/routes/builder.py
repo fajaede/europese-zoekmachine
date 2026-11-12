@@ -14,6 +14,8 @@ from typing import Literal
 from urllib.parse import parse_qs, urlencode, urlsplit
 
 import httpx
+
+from api.client_ip import client_ip as shared_client_ip
 from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel, EmailStr, Field
 
@@ -248,12 +250,8 @@ FREE_LIMITS = (
 
 
 def _client_ip(request: Request) -> str:
-    """Return the client IP as reported by the edge proxy (Vercel)."""
-    for header in ("x-vercel-forwarded-for", "x-real-ip", "x-forwarded-for"):
-        value = request.headers.get(header, "").split(",", maxsplit=1)[0].strip()
-        if value and len(value) <= 64:
-            return value
-    return request.client.host if request.client else "unknown"
+    """Real visitor IP; see api/client_ip.py for which headers are trusted."""
+    return shared_client_ip(request)
 
 
 async def _verify_captcha(token: str, client_ip: str) -> None:

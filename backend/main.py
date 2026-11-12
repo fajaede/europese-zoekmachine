@@ -49,6 +49,7 @@ from backend.seo_geo_audit import (
     validate_public_url,
 )
 from api.routes.builder import init_builder_storage
+from api.client_ip import client_ip as shared_client_ip
 from api.routes.builder import router as builder_router
 
 # Local application imports
@@ -353,16 +354,8 @@ def determine_category(url: str, title: str = "", content: str = "") -> str:
 
 
 def client_ip(request: Request) -> str:
-    """Real visitor IP as reported by the edge (Vercel), falling back to the peer address.
-
-    Behind the Vercel rewrite and the local reverse proxy, request.client.host is a proxy
-    address shared by every visitor, so per-visitor limits must use the forwarded IP.
-    """
-    for header in ("x-vercel-forwarded-for", "x-real-ip", "x-forwarded-for"):
-        value = request.headers.get(header, "").split(",", maxsplit=1)[0].strip()
-        if value and len(value) <= 64:
-            return value
-    return request.client.host if request.client else "unknown"
+    """Real visitor IP; see api/client_ip.py for which headers are trusted."""
+    return shared_client_ip(request)
 
 
 async def _increment_window(redis_client, key: str, window_seconds: int) -> int:
