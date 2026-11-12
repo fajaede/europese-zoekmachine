@@ -446,6 +446,7 @@ async def register_developer(request: RegisterRequest, http_request: Request):
         verification_url = f"{_verification_base_url()}/api/developers/verify?token={token}"
         await asyncio.to_thread(_send_verification_email, normalized_email, verification_url)
     except Exception as exc:
+        logger.exception("Developer verification mail failed (%s)", type(exc).__name__)
         delete_pending_registration(normalized_email)
         raise HTTPException(status_code=503, detail="Verificatiemail kon niet worden verzonden. Probeer het later opnieuw.") from exc
 
