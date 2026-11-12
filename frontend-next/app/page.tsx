@@ -288,6 +288,7 @@ export default function Home() {
         {/* Logo / Header */}
         <h1 className="text-6xl md:text-8xl font-black text-slate-900 mb-6 tracking-tight">
           fajaede<span className="bg-linear-to-r from-orange-500 to-amber-500 bg-clip-text text-transparent">AI+</span>
+          <span className="sr-only"> – Europese, privacyvriendelijke zoekmachine</span>
         </h1>
         <p className="text-lg md:text-xl text-slate-600 mb-10 max-w-2xl font-normal leading-relaxed">
           De onafhankelijke Europese zoekmachine. Veilig, neutraal en zonder profilering of tracking het web doorzoeken.
