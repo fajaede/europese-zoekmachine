@@ -383,9 +383,9 @@ export default function Home() {
                   <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#2563eb" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                     <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon>
                   </svg>
-                  <h3 className="m-0 text-sm font-bold text-slate-800 tracking-wide uppercase">
+                  <h2 className="m-0 text-sm font-bold text-slate-800 tracking-wide uppercase">
                     Fajaede Intelligence Layer
-                  </h3>
+                  </h2>
                 </div>
  
                 {/* Chat Geschiedenis */}
@@ -556,6 +556,10 @@ export default function Home() {
               </div>
             )}
             
+            {searchedQuery && (
+              <h2 className="sr-only">Zoekresultaten voor &quot;{searchedQuery}&quot;</h2>
+            )}
+
             {/* Tekstuele resultaten (Alle / Nieuws / Financieel) */}
             {(activeTab === "all" || activeTab === "news" || activeTab === "finance") && (
               <div className="flex flex-col gap-4">
@@ -629,9 +633,9 @@ export default function Home() {
                           />
                         </div>
                         <div className="p-3 flex-1 flex flex-col justify-between">
-                          <h4 className="text-xs font-semibold text-slate-700 line-clamp-2 mb-1">
+                          <h3 className="text-xs font-semibold text-slate-700 line-clamp-2 mb-1">
                             {hit.title || "Naamloze afbeelding"}
-                          </h4>
+                          </h3>
                           {resultUrl && (
                             <a href={resultUrl} target="_blank" rel="noopener noreferrer nofollow" referrerPolicy="no-referrer" className="text-[10px] text-blue-600 hover:underline truncate block">
                               {new URL(resultUrl).hostname}
@@ -709,9 +713,9 @@ export default function Home() {
                             <div className="text-[10px] text-slate-400 font-bold uppercase tracking-wider mb-1">
                               {hit.source || "Video bron"}
                             </div>
-                            <h4 className="text-sm font-semibold text-slate-800 line-clamp-2">
+                            <h3 className="text-sm font-semibold text-slate-800 line-clamp-2">
                               {hit.title}
-                            </h4>
+                            </h3>
                           </div>
                           {pageTarget && <a href={pageTarget} target="_blank" rel="noopener noreferrer nofollow" referrerPolicy="no-referrer" className="text-xs text-blue-600 hover:underline mt-2 block">Bronpagina openen</a>}
                         </div>
@@ -734,7 +738,7 @@ export default function Home() {
                 </svg>
               </div>
               <div>
-                <h3 className="text-lg font-bold text-slate-800 mb-1.5">Privacy Eerst</h3>
+                <h2 className="text-lg font-bold text-slate-800 mb-1.5">Privacy Eerst</h2>
                 <p className="text-slate-600 text-sm leading-relaxed">Geen tracking, geen profielen. Jouw data blijft van jou, beschermd onder strikte Europese privacywetten.</p>
               </div>
             </div>
@@ -750,7 +754,7 @@ export default function Home() {
                 </svg>
                 </div>
                 <div>
-                  <h3 className="text-lg font-bold text-slate-800 mb-1.5">Help de index groeien</h3>
+                  <h2 className="text-lg font-bold text-slate-800 mb-1.5">Help de index groeien</h2>
                   <p className="text-slate-600 text-sm leading-relaxed">Voeg jouw website toe aan fajaedeAI+ en help mee aan een onafhankelijke Europese zoekindex.</p>
                 </div>
               </div>
@@ -794,7 +798,7 @@ export default function Home() {
                   </svg>
                 </div>
                 <div>
-                  <h3 className="text-lg font-bold text-slate-800 mb-1.5">Website Builder</h3>
+                  <h2 className="text-lg font-bold text-slate-800 mb-1.5">Website Builder</h2>
                   <p className="text-slate-600 text-sm leading-relaxed">Genereer direct een complete website met AI. Je eerste website is gratis.</p>
                   <span className="mt-2 inline-flex items-center gap-1 text-sm font-semibold text-orange-600">
                     Probeer gratis
@@ -810,7 +814,7 @@ export default function Home() {
                   </svg>
                 </div>
                 <div>
-                  <h3 className="text-lg font-bold text-slate-800 mb-1.5">Neutraal & Onafhankelijk</h3>
+                  <h2 className="text-lg font-bold text-slate-800 mb-1.5">Neutraal & Onafhankelijk</h2>
                   <p className="text-slate-600 text-sm leading-relaxed">Onbevooroordeelde resultaten zonder commerciële profilering.</p>
                 </div>
               </div>
