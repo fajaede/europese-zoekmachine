@@ -479,6 +479,13 @@ export default function BuilderPage() {
                 {TURNSTILE_SITE_KEY && (
                   <div ref={captchaContainerRef} className="min-h-16.25 sm:col-span-2" />
                 )}
+                <p className="text-xs leading-relaxed text-slate-500 sm:col-span-2">
+                  Na bevestiging plaatsen we één noodzakelijke cookie om je ingelogd te houden. Meer in ons{' '}
+                  <Link href="/cookie-policy" className="font-semibold text-orange-600 underline">
+                    cookiebeleid
+                  </Link>
+                  .
+                </p>
               </form>
             )}
             {accountMessage && <p role="status" className="mt-3 text-sm text-emerald-700">{accountMessage}</p>}
