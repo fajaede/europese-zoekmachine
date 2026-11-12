@@ -329,21 +329,20 @@ def determine_category(url: str, title: str = "", content: str = "") -> str:
     return "web"
 
 
-async def enforce_request_rate_limit(
-    request: Request,
-    action: str,
-    *,
-    limit: int,
-    window_seconds: int,
-) -> None:
-    """Apply a Redis-backed fixed-window limit using the transport peer address."""
-    redis_client = getattr(request.app.state, "redis_client", None)
-    if not redis_client:
-        return
+def client_ip(request: Request) -> str:
+    """Real visitor IP as reported by the edge (Vercel), falling back to the peer address.
 
-    client_host = request.client.host if request.client else "unknown"
-    client_hash = hashlib.sha256(client_host.encode("utf-8")).hexdigest()[:24]
-    key = f"ratelimit:{action}:{client_hash}"
+    Behind the Vercel rewrite and the local reverse proxy, request.client.host is a proxy
+    address shared by every visitor, so per-visitor limits must use the forwarded IP.
+    """
+    for header in ("x-vercel-forwarded-for", "x-real-ip", "x-forwarded-for"):
+        value = request.headers.get(header, "").split(",", maxsplit=1)[0].strip()
+        if value and len(value) <= 64:
+            return value
+    return request.client.host if request.client else "unknown"
+
+
+async def _increment_window(redis_client, key: str, window_seconds: int) -> int:
     count = await redis_client.eval(
         "local count = redis.call('INCR', KEYS[1]); "
         "if count == 1 then redis.call('EXPIRE', KEYS[1], ARGV[1]); end; "
@@ -352,8 +351,42 @@ async def enforce_request_rate_limit(
         key,
         window_seconds,
     )
-    if int(count) > limit:
-        raise HTTPException(status_code=429, detail="Te veel verzoeken. Probeer het later opnieuw.")
+    return int(count)
+
+
+async def enforce_request_rate_limit(
+    request: Request,
+    action: str,
+    *,
+    limit: int,
+    window_seconds: int,
+    global_limit: int | None = None,
+) -> None:
+    """Redis fixed-window limit per visitor IP, plus an optional site-wide cap.
+
+    The site-wide cap bounds total cost even if someone spoofs forwarded IP headers
+    by calling the backend directly.
+    """
+    redis_client = getattr(request.app.state, "redis_client", None)
+    if not redis_client:
+        return
+
+    try:
+        client_hash = hashlib.sha256(client_ip(request).encode("utf-8")).hexdigest()[:24]
+        if await _increment_window(
+            redis_client, f"ratelimit:{action}:{client_hash}", window_seconds
+        ) > limit:
+            raise HTTPException(status_code=429, detail="Te veel verzoeken. Probeer het later opnieuw.")
+        if global_limit is not None and await _increment_window(
+            redis_client, f"ratelimit:{action}:global", window_seconds
+        ) > global_limit:
+            raise HTTPException(
+                status_code=429,
+                detail="Het is momenteel erg druk. Probeer het over een minuut opnieuw.",
+            )
+    except redis.RedisError:
+        # Redis down: fail open for availability rather than blocking every visitor.
+        return
 
 
 class Crawler:  # pylint: disable=too-few-public-methods
@@ -819,7 +852,9 @@ async def start_crawl(
             detail="Kan niet crawlen: MeiliSearch is niet beschikbaar.",
         )
 
-    await enforce_request_rate_limit(request, "crawl-submit", limit=3, window_seconds=3600)
+    await enforce_request_rate_limit(
+        request, "crawl-submit", limit=3, window_seconds=3600, global_limit=60
+    )
 
     try:
         crawl_url = await validate_public_url(crawl_request.url.strip())
@@ -1241,7 +1276,9 @@ async def summarize(
     if cached:
         return {"ai": cached, "cached": True}
 
-    await enforce_request_rate_limit(request, "summarize", limit=8, window_seconds=60)
+    await enforce_request_rate_limit(
+        request, "summarize", limit=8, window_seconds=60, global_limit=120
+    )
 
     # Controleer of de OpenAI client beschikbaar is.
     if not hasattr(request.app.state, "openai_client") or not request.app.state.openai_client:
