@@ -294,6 +294,11 @@ def _consume_rate_limits(
     Must run inside a transaction; the caller rolls back when False is returned.
     """
     now = int(time.time())
+    # Keep hashed IP/e-mail counters at most two days (as stated in the privacy policy).
+    connection.execute(
+        "DELETE FROM builder_rate_limits WHERE window_start < ?",
+        (now - 2 * 24 * 60 * 60,),
+    )
     allowed = True
     for scope, key, window, limit in checks:
         scope_hash = _hash(f"{scope}:{key}")

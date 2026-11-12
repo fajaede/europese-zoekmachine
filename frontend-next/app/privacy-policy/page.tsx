@@ -19,7 +19,7 @@ export default function PrivacyPolicy() {
         Privacybeleid voor fajaede.eu
       </h1>
       <p style={{ color: "#64748b", marginTop: 0 }}>
-        <strong>Laatst bijgewerkt:</strong> 5 november 2026
+        <strong>Laatst bijgewerkt:</strong> 12 november 2026
       </p>
 
       <h2 style={{ fontSize: 24, marginTop: 40, color: "#1e293b", borderBottom: '1px solid #e2e8f0', paddingBottom: '8px' }}>1. Wie zijn wij?</h2>
@@ -147,6 +147,17 @@ export default function PrivacyPolicy() {
         kaart- of bankrekeningnummers. De verwerking van account- en
         betaalgegevens is nodig om de Builder, credits en betaling te leveren
         en om aan toepasselijke wettelijke verplichtingen te voldoen.
+        <br /><br />
+        Om misbruik van de Builder te voorkomen, gebruiken wij op het
+        e-mailformulier Cloudflare Turnstile. Cloudflare verwerkt daarbij
+        technische browsergegevens en uw IP-adres, uitsluitend om bots te
+        herkennen (gerechtvaardigd belang: beveiliging). Daarnaast bewaren wij
+        tijdelijk een gehashte versie van uw IP-adres en e-mailadres om
+        aanvraaglimieten te handhaven; deze tellers worden na maximaal twee
+        dagen verwijderd. Foto&apos;s in gegenereerde websites worden
+        rechtstreeks van Unsplash (images.unsplash.com) geladen, waarbij
+        Unsplash uw IP-adres ziet. Meer over cookies leest u in ons{" "}
+        <Link href="/cookie-policy">cookiebeleid</Link>.
         <br /><br />
         De Ollama-fallback wordt op onze eigen server verwerkt met het lokale
         model phi3:mini; deze fallback-aanvraag wordt niet naar Ollama Cloud
