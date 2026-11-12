@@ -1,5 +1,9 @@
 """Tests for builder credits and bounded OpenAI generation."""
 
+# Tests deliberately exercise private helpers and use small inline fakes.
+# pylint: disable=protected-access,missing-function-docstring,missing-class-docstring
+# pylint: disable=too-few-public-methods,consider-using-with
+
 import asyncio
 import json
 import os
@@ -9,16 +13,25 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
+from urllib.parse import parse_qs, urlsplit
 
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
-from urllib.parse import parse_qs, urlsplit
 
+from api.disposable_domains import is_disposable_email
 from api.routes import builder
-from api.routes.website_generator import WebsiteGeneratorService
+from api.routes.website_generator import (
+    ALLOWED_PHOTO_IDS,
+    WebsiteGeneratorService,
+    _photo_category,
+    _restrict_images,
+    _strip_active_content,
+)
 
 
 class BuilderTests(unittest.TestCase):
+    """Builder accounts, credits, payments, abuse limits and generated HTML."""
+
     def setUp(self):
         self.temp_dir = tempfile.TemporaryDirectory()
         self.db_path = str(Path(self.temp_dir.name) / "builder.db")
@@ -230,8 +243,6 @@ class BuilderTests(unittest.TestCase):
         self.assertEqual(send_email_mock.call_count, 1)
 
     def test_disposable_email_domains_are_blocked(self):
-        from api.disposable_domains import is_disposable_email
-
         self.assertTrue(is_disposable_email("x@mailinator.com"))
         self.assertTrue(is_disposable_email("x@sub.yopmail.com"))
         self.assertFalse(is_disposable_email("x@gmail.com"))
@@ -260,7 +271,8 @@ class BuilderTests(unittest.TestCase):
         connection = builder._connect()
         for token in ("phone-session", "laptop-session"):
             connection.execute(
-                "INSERT INTO builder_sessions (token_hash, account_id, expires_at) VALUES (?, ?, ?)",
+                "INSERT INTO builder_sessions (token_hash, account_id, expires_at) "
+                "VALUES (?, ?, ?)",
                 (builder._hash(token), "account-1", int(time.time()) + 3600),
             )
         connection.commit()
@@ -273,7 +285,11 @@ class BuilderTests(unittest.TestCase):
             client.cookies.set(builder.SESSION_COOKIE, "phone-session")
             foreign = client.post(
                 "/api/builder/generate",
-                json={"industry": "horeca", "style": "modern", "description": "Een gezellig restaurant."},
+                json={
+                    "industry": "horeca",
+                    "style": "modern",
+                    "description": "Een gezellig restaurant.",
+                },
                 headers={"origin": "https://evil.example"},
             )
             self.assertEqual(foreign.status_code, 403)
@@ -348,8 +364,6 @@ class BuilderTests(unittest.TestCase):
         self.assertEqual(charge_type, "free")
 
     def test_generated_html_is_stripped_of_active_content(self):
-        from api.routes.website_generator import _strip_active_content
-
         cleaned = _strip_active_content(
             '<html><body onload="x()"><script>a</script>'
             '<a href="javascript:alert(1)">x</a><img src=x onerror=alert(1)>'
@@ -462,12 +476,12 @@ class BuilderTests(unittest.TestCase):
         self.assertIn("herroepingsrecht", send_email_mock.call_args.args[2])
 
         connection = builder._connect()
-        credits = connection.execute(
+        credit_balance = connection.execute(
             "SELECT credits FROM builder_accounts WHERE id = ?",
             ("account-1",),
         ).fetchone()["credits"]
         connection.close()
-        self.assertEqual(credits, 10)
+        self.assertEqual(credit_balance, 10)
 
     def test_website_generation_returns_static_html_without_scripts(self):
         class FakeCompletions:
@@ -481,7 +495,10 @@ class BuilderTests(unittest.TestCase):
                             message=SimpleNamespace(
                                 content=json.dumps(
                                     {
-                                        "html": "<html><body><script>alert(1)</script><h1>Hallo</h1></body></html>",
+                                        "html": (
+                                            "<html><body><script>alert(1)</script>"
+                                            "<h1>Hallo</h1></body></html>"
+                                        ),
                                         "site_brief": {
                                             "target_audience": "Lokale klanten",
                                             "keywords": ["bakker"],
@@ -514,15 +531,10 @@ class BuilderTests(unittest.TestCase):
         self.assertEqual(result["site_brief"]["keywords"], ["bakker"])
 
     def test_json_ld_is_kept_and_unknown_images_are_replaced(self):
-        from api.routes.website_generator import (
-            ALLOWED_PHOTO_IDS,
-            _restrict_images,
-            _strip_active_content,
-        )
-
         html = (
             '<html><head><title>x</title>'
-            '<script type="application/ld+json">{"@type": "Restaurant", "name": "A</b> & B"}</script>'
+            '<script type="application/ld+json">'
+            '{"@type": "Restaurant", "name": "A</b> & B"}</script>'
             '<script>alert(1)</script></head><body>'
             '<img src="https://images.unsplash.com/photo-123-abc?w=10">'
             '<img src="https://evil.test/tracker.gif">'
@@ -543,8 +555,6 @@ class BuilderTests(unittest.TestCase):
         self.assertIn("1517248135467-4c7edcad34c4", ALLOWED_PHOTO_IDS)
 
     def test_photo_category_follows_site_type_and_keywords(self):
-        from api.routes.website_generator import _photo_category
-
         self.assertEqual(_photo_category({"site_type": "restaurant"}), "food")
         self.assertEqual(
             _photo_category({"site_type": "general_business", "industry": "horeca"}),
