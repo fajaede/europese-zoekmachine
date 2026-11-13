@@ -1,7 +1,7 @@
 import Link from 'next/link';
 
 export const COMPANY = {
-  name: 'fajaedeAI+',
+  name: 'fajaede',
   street: 'Lodewijk de Koninckstraat 31',
   city: '2600 Berchem, Antwerpen',
   country: 'België',

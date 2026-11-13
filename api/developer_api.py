@@ -973,7 +973,7 @@ async def _send_developer_confirmation(
         "https://api.fajaede.eu/developers#wat-krijg-je\n\n"
         + withdrawal
         + f"Algemene voorwaarden (versie {TERMS_VERSION}): https://www.fajaede.eu/algemene-voorwaarden\n\n"
-        "fajaedeAI+ - Lodewijk de Koninckstraat 31, 2600 Berchem, België - BE1032407424\n"
+        "fajaede - Lodewijk de Koninckstraat 31, 2600 Berchem, België - BE1032407424\n"
     )
     try:
         await asyncio.to_thread(send_email, f"Bevestiging: {plan['name']}-pas fajaede Developer API", email, body)

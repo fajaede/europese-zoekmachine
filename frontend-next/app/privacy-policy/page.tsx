@@ -24,14 +24,14 @@ export default function PrivacyPolicy() {
 
       <h2 style={{ fontSize: 24, marginTop: 40, color: "#1e293b", borderBottom: '1px solid #e2e8f0', paddingBottom: '8px' }}>1. Wie zijn wij?</h2>
       <p>
-        fajaede.eu (&quot;wij&quot;, &quot;ons&quot; of &quot;onze&quot;) is een dienst van fajaedeAI+. Wij
+        fajaede.eu (&quot;wij&quot;, &quot;ons&quot; of &quot;onze&quot;) is een dienst van fajaede. Wij
         respecteren uw privacy en zetten ons in om uw persoonlijke gegevens te
         beschermen.
       </p>
       <p style={{ background: '#f8fafc', padding: '16px', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
         <strong>Verwerkingsverantwoordelijke:</strong>
         <br />
-        fajaedeAI+
+        fajaede
         <br />
         Lodewijk de Koninckstraat 31
         <br />

@@ -926,7 +926,7 @@ async def _send_purchase_confirmation(email: str, payment_id: str, order_id: str
         "digitale inhoud en erkend dat je daardoor je herroepingsrecht verliest "
         "(art. VI.53, 13° Wetboek van economisch recht).\n\n"
         f"Algemene voorwaarden (versie {TERMS_VERSION}): {public_url}/algemene-voorwaarden\n\n"
-        "fajaedeAI+ - Lodewijk de Koninckstraat 31, 2600 Berchem, België - BE1032407424\n"
+        "fajaede - Lodewijk de Koninckstraat 31, 2600 Berchem, België - BE1032407424\n"
     )
     try:
         await asyncio.to_thread(
