@@ -148,6 +148,12 @@ export default function PrivacyPolicy() {
         betaalgegevens is nodig om de Builder, credits en betaling te leveren
         en om aan toepasselijke wettelijke verplichtingen te voldoen.
         <br /><br />
+        Koopt u een Developer API-pas als bedrijf, dan verwerken wij uw
+        bedrijfsnaam, adres en btw-nummer om een factuur op te maken en
+        bewaren wij deze gegevens zolang de boekhoudwetgeving dat vereist. Het
+        btw-nummer controleren wij via VIES, de dienst van de Europese
+        Commissie voor de controle van btw-nummers (wettelijke verplichting).
+        <br /><br />
         Om misbruik van de Builder te voorkomen, gebruiken wij op het
         e-mailformulier Cloudflare Turnstile. Cloudflare verwerkt daarbij
         technische browsergegevens en uw IP-adres, uitsluitend om bots te

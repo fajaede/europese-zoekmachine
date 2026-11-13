@@ -227,6 +227,7 @@
         .select { width: 100%; padding: 12px; border: 2px solid #e0e0e0; border-radius: 8px; font-size: 16px; }
         .check { display: flex; gap: 10px; align-items: flex-start; margin-bottom: 12px; color: #444; }
         .check input { margin-top: 5px; }
+        .plan-excl { font-size: 0.85em; color: #888 !important; }
         .plan-link { display: inline-block; margin-top: 10px; color: #667eea; font-weight: 600; text-decoration: none; }
         .plan-link:hover { text-decoration: underline; }
         .compare-wrap { overflow-x: auto; margin: 16px 0 24px; }
@@ -341,6 +342,7 @@
                         <p class="plan-limit">2.000 requests per dag</p>
                         <p class="plan-price">€9 <span>/ 30 dagen</span></p>
                         <p class="plan-note">€24 voor 90 dagen (bespaar €3)</p>
+                        <p class="plan-excl">Excl. btw: €7,44 / €19,83</p>
                         <a class="plan-link" href="#wat-krijg-je">Wat krijg je? →</a>
                     </div>
                     <div class="plan-card plan-featured">
@@ -348,6 +350,7 @@
                         <p class="plan-limit">10.000 requests per dag</p>
                         <p class="plan-price">€29 <span>/ 30 dagen</span></p>
                         <p class="plan-note">€79 voor 90 dagen (bespaar €8)</p>
+                        <p class="plan-excl">Excl. btw: €23,97 / €65,29</p>
                         <a class="plan-link" href="#wat-krijg-je">Wat krijg je? →</a>
                     </div>
                 </div>
@@ -363,6 +366,22 @@
                         <option value="premium:90">Premium · 90 dagen · €79</option>
                         <option value="premium:30">Premium · 30 dagen · €29</option>
                     </select>
+                </div>
+                <label class="check"><input type="checkbox" id="isBusiness" onchange="toggleBusiness()" /> Ik koop als bedrijf en wil een factuur.</label>
+                <div id="businessFields" hidden>
+                    <div class="form-group">
+                        <label for="companyName">Bedrijfsnaam</label>
+                        <input type="text" id="companyName" maxlength="120" autocomplete="organization" />
+                    </div>
+                    <div class="form-group">
+                        <label for="vatNumber">Btw-nummer</label>
+                        <input type="text" id="vatNumber" maxlength="24" placeholder="BE0123456789" />
+                    </div>
+                    <div class="form-group">
+                        <label for="companyAddress">Adres (straat, nummer, postcode, plaats, land)</label>
+                        <input type="text" id="companyAddress" maxlength="250" autocomplete="street-address" />
+                    </div>
+                    <p class="plan-note">We controleren je btw-nummer bij de Europese Commissie (VIES). Belgische bedrijven betalen de prijs inclusief 21% btw en kunnen die btw aftrekken. Bedrijven uit een ander EU-land met een geldig btw-nummer betalen de prijs <strong>exclusief btw</strong> (btw verlegd). Je factuur ontvang je binnen 5 werkdagen.</p>
                 </div>
                 <label class="check"><input type="checkbox" id="acceptTerms" /> Ik ga akkoord met de <a href="https://www.fajaede.eu/algemene-voorwaarden" target="_blank" rel="noopener">algemene voorwaarden</a>.</label>
                 <label class="check"><input type="checkbox" id="immediateStart" /> Ik vraag uitdrukkelijk dat de pas direct na betaling start. Herroep ik als consument binnen 14 dagen, dan betaal ik voor de dagen die al verstreken zijn.</label>
@@ -645,6 +664,20 @@
             }
         }
         
+        function toggleBusiness() {
+            document.getElementById('businessFields').hidden = !document.getElementById('isBusiness').checked;
+        }
+
+        function businessDetails() {
+            if (!document.getElementById('isBusiness').checked) return { business: false };
+            return {
+                business: true,
+                company_name: document.getElementById('companyName').value.trim(),
+                vat_number: document.getElementById('vatNumber').value.trim(),
+                company_address: document.getElementById('companyAddress').value.trim(),
+            };
+        }
+
         async function buyPlan() {
             const apiKey = document.getElementById('apiKeyBuy').value.trim();
             const [plan, days] = document.getElementById('planChoice').value.split(':');
@@ -672,6 +705,7 @@
                         days: Number(days),
                         accept_terms: acceptTerms,
                         immediate_start: immediateStart,
+                        ...businessDetails(),
                     })
                 });
                 const data = await response.json();

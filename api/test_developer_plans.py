@@ -174,6 +174,145 @@ class DeveloperPlanTests(unittest.TestCase):
             with self.assertRaises(developer_api.HTTPException):
                 asyncio.run(developer_api.developer_mollie_webhook(FakeRequest()))
 
+    def test_vat_helpers(self):
+        self.assertEqual(developer_api.price_excl_vat("9.00"), "7.44")
+        self.assertEqual(developer_api.price_excl_vat("79.00"), "65.29")
+        self.assertEqual(developer_api.normalize_vat_number("be 1032.407.424"), ("BE", "1032407424"))
+        self.assertEqual(developer_api.normalize_vat_number("GR123456789"), ("EL", "123456789"))
+        self.assertIsNone(developer_api.normalize_vat_number("GB123456789"))  # not EU
+        self.assertIsNone(developer_api.normalize_vat_number("<script>"))
+
+    def _business_checkout(self, vat_number, vies_result):
+        created = {}
+
+        class FakeResponse:
+            def __init__(self, data):
+                self.data = data
+
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return self.data
+
+        class FakeClient:
+            def __init__(self, **_kwargs):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *_args):
+                return None
+
+            async def get(self, *_args, **_kwargs):  # VIES
+                return FakeResponse(vies_result)
+
+            async def post(self, *_args, json=None, **_kwargs):  # Mollie
+                created.update(json)
+                return FakeResponse(
+                    {"id": f"tr_b2b{vat_number}", "mode": "test", "status": "open",
+                     "_links": {"checkout": {"href": "https://mollie.example/checkout"}}}
+                )
+
+        config = ("test", "test_key", "https://api.example.test/hook", "https://api.example.test")
+        with (
+            patch.object(developer_api, "_mollie_config", return_value=config),
+            patch.object(developer_api.httpx, "AsyncClient", FakeClient),
+        ):
+            response = self.client.post(
+                "/api/developers/checkout",
+                headers={"X-API-Key": "sk_eu_testkey"},
+                json={
+                    "plan": "pro", "days": 30, "accept_terms": True, "immediate_start": True,
+                    "business": True, "company_name": "Bakkerij <b>Test</b> BV",
+                    "vat_number": vat_number, "company_address": "Straat 1, 1000 Brussel",
+                },
+            )
+        return response, created
+
+    def test_eu_business_pays_excl_vat_and_belgian_business_incl(self):
+        response, created = self._business_checkout("NL123456789B01", {"isValid": True, "userError": "VALID"})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(created["amount"], {"currency": "EUR", "value": "7.44"})
+        self.assertTrue(created["metadata"]["reverse_charge"])
+
+        response, created = self._business_checkout("BE0123456789", {"isValid": True, "userError": "VALID"})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(created["amount"], {"currency": "EUR", "value": "9.00"})
+
+        conn = developer_api.get_db()
+        names = [row[0] for row in conn.execute("SELECT invoice_name FROM developer_payments")]
+        conn.close()
+        self.assertEqual(names, ["Bakkerij Test BV", "Bakkerij Test BV"])
+
+    def test_invalid_or_unavailable_vies_blocks_checkout(self):
+        response, created = self._business_checkout("NL123456789B01", {"isValid": False, "userError": "INVALID"})
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(created, {})
+        response, created = self._business_checkout("DE123456789", {"isValid": False, "userError": "MS_UNAVAILABLE"})
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(created, {})
+
+    def test_reverse_charge_webhook_confirms_and_requests_invoice(self):
+        conn = developer_api.get_db()
+        key_id = conn.execute("SELECT id FROM api_keys").fetchone()[0]
+        conn.execute(
+            "INSERT INTO developer_payments (order_id, key_id, plan, days, amount, mode, status, created_at, "
+            "invoice_name, invoice_vat, invoice_address, reverse_charge) "
+            "VALUES ('order-b2b', ?, 'premium', 90, '65.29', 'test', 'open', ?, 'Firma NL', 'NL123456789B01', "
+            "'Straat 1, Amsterdam', 1)",
+            (key_id, int(time.time())),
+        )
+        conn.commit()
+        conn.close()
+        payment = {
+            "id": "tr_b2b", "mode": "test", "status": "paid",
+            "amount": {"currency": "EUR", "value": "65.29"},
+            "metadata": {"developer_order": "order-b2b", "plan": "premium", "days": 90, "reverse_charge": True},
+        }
+
+        class FakeResponse:
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return payment
+
+        class FakeClient:
+            def __init__(self, **_kwargs):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *_args):
+                return None
+
+            async def get(self, *_args, **_kwargs):
+                return FakeResponse()
+
+        class FakeRequest:
+            async def body(self):
+                return b"id=tr_b2b"
+
+        config = ("test", "test_key", "https://api.example.test/hook", "https://api.example.test")
+        with (
+            patch.object(developer_api, "_mollie_config", return_value=config),
+            patch.object(developer_api.httpx, "AsyncClient", FakeClient),
+            patch.object(developer_api, "send_email") as send_email_mock,
+            patch.dict(os.environ, {"INVOICE_NOTIFY_EMAIL": "owner@example.com"}),
+        ):
+            asyncio.run(developer_api.developer_mollie_webhook(FakeRequest()))
+
+        self.assertEqual(send_email_mock.call_count, 2)
+        customer_mail, owner_mail = (call.args for call in send_email_mock.call_args_list)
+        self.assertIn("Btw verlegd", customer_mail[2])
+        self.assertNotIn("herroepen", customer_mail[2])
+        self.assertEqual(owner_mail[1], "owner@example.com")
+        self.assertIn("NL123456789B01", owner_mail[2])
+        self.assertEqual(developer_api.active_plan(self._key_row())[0], "premium")
+
     def test_registration_mail_is_limited_per_email_across_ips(self):
         sent = []
         with (

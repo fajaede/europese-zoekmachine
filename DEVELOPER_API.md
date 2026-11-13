@@ -206,6 +206,9 @@ Passen worden niet automatisch verlengd. Dezelfde pas opnieuw kopen telt dagen o
 
 Gebruikt dezelfde `MOLLIE_API_KEY` en `MOLLIE_MODE` als de builder. De webhook is standaard `${DEVELOPER_VERIFICATION_BASE_URL}/api/developers/payments/webhook` (overschrijfbaar met `DEVELOPER_WEBHOOK_URL`); hij wordt per betaling meegestuurd, dus in het Mollie-dashboard hoeft niets ingesteld te worden.
 
+### Bedrijven en btw
+Checkout accepteert optioneel `business`, `company_name`, `vat_number` en `company_address`. Het btw-nummer wordt via VIES gecontroleerd (bij storing: 503, geen betaling). Belgische bedrijven betalen de prijs incl. 21% btw; andere EU-bedrijven met geldig nummer de prijs excl. btw (btw verlegd). Na betaling krijgt `INVOICE_NOTIFY_EMAIL` (standaard `SMTP_FROM`) een mail met alle factuurgegevens; de factuur zelf (Peppol) maak je in je boekhoudpakket.
+
 ## Database Schema
 
 ### api_keys tabel

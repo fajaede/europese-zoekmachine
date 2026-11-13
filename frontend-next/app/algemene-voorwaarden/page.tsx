@@ -134,6 +134,13 @@ export default function AlgemeneVoorwaarden() {
             De daglimiet wordt elke dag opnieuw ingesteld; ongebruikte requests worden niet meegenomen. Na afloop
             valt uw API-key terug op Free.
           </li>
+          <li>
+            <strong>Aankoop als bedrijf:</strong> geeft u bij het afrekenen uw bedrijfsnaam, adres en btw-nummer op,
+            dan controleren wij het btw-nummer via VIES van de Europese Commissie en ontvangt u binnen 5 werkdagen een
+            factuur. Belgische bedrijven betalen de prijs inclusief 21% btw. Bedrijven uit een andere EU-lidstaat met
+            een geldig btw-nummer betalen de prijs exclusief btw; de btw wordt verlegd naar de afnemer (artikel 196
+            van Richtlijn 2006/112/EG). U bent verantwoordelijk voor de juistheid van de opgegeven gegevens.
+          </li>
         </ul>
       </Section>
 

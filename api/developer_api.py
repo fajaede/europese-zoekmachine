@@ -10,6 +10,7 @@ import hashlib
 import json
 import time
 from datetime import datetime
+from decimal import ROUND_HALF_UP, Decimal
 from typing import Optional
 from urllib.parse import parse_qs, urlsplit
 from fastapi import APIRouter, HTTPException, Header, Request, Response
@@ -44,6 +45,58 @@ PLANS = {
                 "prices": {30: "29.00", 90: "79.00"}},
 }
 PLAN_RANK = {"free": 0, "pro": 1, "premium": 2}
+
+VAT_RATE = Decimal("0.21")
+VIES_URL = "https://ec.europa.eu/taxation_customs/vies/rest-api/ms/{country}/vat/{number}"
+# EU member states as used by VIES (Greece is EL).
+EU_VAT_COUNTRIES = {
+    "AT", "BE", "BG", "CY", "CZ", "DE", "DK", "EE", "EL", "ES", "FI", "FR", "HR", "HU",
+    "IE", "IT", "LT", "LU", "LV", "MT", "NL", "PL", "PT", "RO", "SE", "SI", "SK",
+}
+
+
+def price_excl_vat(price_incl: str) -> str:
+    """Price without 21% Belgian VAT, rounded to cents."""
+    value = Decimal(price_incl) / (Decimal(1) + VAT_RATE)
+    return str(value.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
+
+
+def expected_amount(plan_key: str, days: int, reverse_charge: bool) -> str | None:
+    plan = PLANS.get(plan_key)
+    price = plan["prices"].get(days) if plan else None
+    if price is None:
+        return None
+    return price_excl_vat(price) if reverse_charge else price
+
+
+def normalize_vat_number(raw: str) -> tuple[str, str] | None:
+    """Return (country, number) for an EU VAT number such as 'BE 1032.407.424'."""
+    value = re.sub(r"[\s.\-]", "", raw or "").upper()
+    match = re.fullmatch(r"([A-Z]{2})([0-9A-Z]{2,13})", value)
+    if not match:
+        return None
+    country = "EL" if match.group(1) == "GR" else match.group(1)
+    if country not in EU_VAT_COUNTRIES:
+        return None
+    return country, match.group(2)
+
+
+async def check_vies(country: str, number: str) -> bool | None:
+    """True/False from VIES; None when VIES or the member state is unavailable."""
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            response = await client.get(VIES_URL.format(country=country, number=number))
+            response.raise_for_status()
+            result = response.json()
+    except (httpx.HTTPError, ValueError):
+        logger.exception("VIES check failed for %s", country)
+        return None
+    if result.get("isValid") is True:
+        return True
+    # A definite "no"; anything else (MS_UNAVAILABLE, TIMEOUT, ...) means: try again later.
+    if result.get("isValid") is False and result.get("userError") in {"VALID", "INVALID", "INVALID_INPUT"}:
+        return False
+    return None
 
 DB_PATH = os.getenv(
     "DEVELOPER_KEYS_DB_PATH",
@@ -109,6 +162,15 @@ def init_db():
         terms_version TEXT,
         consent_at INTEGER
     )""")
+    payment_columns = {row[1] for row in cursor.execute("PRAGMA table_info(developer_payments)")}
+    for column, definition in (
+        ("invoice_name", "TEXT"),
+        ("invoice_vat", "TEXT"),
+        ("invoice_address", "TEXT"),
+        ("reverse_charge", "INTEGER NOT NULL DEFAULT 0"),
+    ):
+        if column not in payment_columns:
+            cursor.execute(f"ALTER TABLE developer_payments ADD COLUMN {column} {definition}")
     columns = {row[1] for row in cursor.execute("PRAGMA table_info(api_keys)")}
     if "plan" not in columns:
         cursor.execute("ALTER TABLE api_keys ADD COLUMN plan TEXT NOT NULL DEFAULT 'free'")
@@ -195,6 +257,10 @@ class DeveloperCheckoutRequest(BaseModel):
     days: int
     accept_terms: bool = False
     immediate_start: bool = False
+    business: bool = False
+    company_name: str = Field(default="", max_length=120)
+    vat_number: str = Field(default="", max_length=24)
+    company_address: str = Field(default="", max_length=250)
 
 def generate_api_key() -> str:
     return f"sk_eu_{secrets.token_urlsafe(24)}"
@@ -689,7 +755,30 @@ async def create_developer_checkout(
     if not config:
         raise HTTPException(status_code=503, detail="Betalingen zijn nog niet ingesteld. Probeer het later opnieuw.")
     mode, mollie_key, webhook_url, public_base = config
-    amount = plan["prices"][payload.days]
+
+    invoice_name = invoice_vat = invoice_address = None
+    reverse_charge = False
+    if payload.business:
+        invoice_name = clean_text(payload.company_name, 120)
+        invoice_address = clean_text(payload.company_address, 250)
+        vat = normalize_vat_number(payload.vat_number)
+        if not invoice_name or not invoice_address or not vat:
+            raise HTTPException(
+                status_code=400,
+                detail="Vul bedrijfsnaam, adres en een geldig EU-btw-nummer in (bijvoorbeeld BE0123456789).",
+            )
+        valid = await check_vies(*vat)
+        if valid is None:
+            raise HTTPException(
+                status_code=503,
+                detail="De Europese btw-controle (VIES) is tijdelijk niet bereikbaar. Probeer het over enkele minuten opnieuw.",
+            )
+        if not valid:
+            raise HTTPException(status_code=400, detail="Dit btw-nummer is volgens VIES niet geldig.")
+        invoice_vat = "".join(vat)
+        reverse_charge = vat[0] != "BE"
+
+    amount = expected_amount(payload.plan, payload.days, reverse_charge)
     order_id = str(uuid.uuid4())
     now = int(time.time())
 
@@ -697,9 +786,13 @@ async def create_developer_checkout(
     try:
         conn.execute(
             "INSERT INTO developer_payments "
-            "(order_id, key_id, plan, days, amount, mode, status, created_at, terms_version, consent_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, 'creating', ?, ?, ?)",
-            (order_id, user["id"], payload.plan, payload.days, amount, mode, now, TERMS_VERSION, now),
+            "(order_id, key_id, plan, days, amount, mode, status, created_at, terms_version, consent_at, "
+            "invoice_name, invoice_vat, invoice_address, reverse_charge) "
+            "VALUES (?, ?, ?, ?, ?, ?, 'creating', ?, ?, ?, ?, ?, ?, ?)",
+            (
+                order_id, user["id"], payload.plan, payload.days, amount, mode, now, TERMS_VERSION, now,
+                invoice_name, invoice_vat, invoice_address, int(reverse_charge),
+            ),
         )
         conn.commit()
     finally:
@@ -707,10 +800,18 @@ async def create_developer_checkout(
 
     body = {
         "amount": {"currency": "EUR", "value": amount},
-        "description": f"fajaede Developer API - {plan['name']} {payload.days} dagen",
+        "description": (
+            f"fajaede Developer API - {plan['name']} {payload.days} dagen"
+            + (" (btw verlegd)" if reverse_charge else "")
+        ),
         "redirectUrl": f"{public_base}/developers?payment=return",
         "webhookUrl": webhook_url,
-        "metadata": {"developer_order": order_id, "plan": payload.plan, "days": payload.days},
+        "metadata": {
+            "developer_order": order_id,
+            "plan": payload.plan,
+            "days": payload.days,
+            "reverse_charge": reverse_charge,
+        },
     }
     try:
         async with httpx.AsyncClient(timeout=15) as client:
@@ -780,10 +881,11 @@ async def developer_mollie_webhook(request: Request) -> dict[str, str]:
             not order
             or not plan
             or order["mode"] != mode
-            or order["amount"] != plan["prices"].get(order["days"])
+            or order["amount"] != expected_amount(order["plan"], order["days"], bool(order["reverse_charge"]))
             or payment.get("amount") != {"currency": "EUR", "value": order["amount"]}
             or metadata.get("plan") != order["plan"]
             or metadata.get("days") != order["days"]
+            or bool(metadata.get("reverse_charge", False)) != bool(order["reverse_charge"])
         ):
             raise HTTPException(status_code=404, detail="Developer-bestelling niet gevonden.")
 
@@ -801,7 +903,7 @@ async def developer_mollie_webhook(request: Request) -> dict[str, str]:
                 (order["plan"], new_expires, order["key_id"]),
             )
             granted_at = now
-            confirmation = (key_row["email"], plan, order["days"], order["amount"], new_expires)
+            confirmation = (key_row["email"], plan, dict(order), new_expires)
         conn.execute(
             "UPDATE developer_payments SET mollie_id = ?, status = ?, granted_at = ? WHERE order_id = ?",
             (payment_id, status, granted_at, order_id),
@@ -818,25 +920,59 @@ async def developer_mollie_webhook(request: Request) -> dict[str, str]:
     return {"status": "ok"}
 
 
+def _euro(value: str | Decimal) -> str:
+    return f"EUR {Decimal(value):.2f}".replace(".", ",")
+
+
+def _amount_lines(order: dict) -> str:
+    if order.get("reverse_charge"):
+        return (
+            f"Bedrag: {_euro(order['amount'])} exclusief btw\n"
+            "Btw verlegd naar de afnemer (art. 196 Btw-richtlijn 2006/112/EG)\n"
+        )
+    incl = Decimal(order["amount"])
+    excl = Decimal(price_excl_vat(order["amount"]))
+    return (
+        f"Bedrag: {_euro(incl)} inclusief btw\n"
+        f"Waarvan 21% btw: {_euro(incl - excl)} (exclusief btw: {_euro(excl)})\n"
+    )
+
+
 async def _send_developer_confirmation(
-    order_id: str, payment_id: str, email: str, plan: dict, days: int, amount: str, expires_at: int
+    order_id: str, payment_id: str, email: str, plan: dict, order: dict, expires_at: int
 ) -> None:
-    """Confirm the purchase and the withdrawal waiver on a durable medium (best effort)."""
+    """Confirm the purchase on a durable medium and ask the owner to invoice businesses (best effort)."""
     until = datetime.fromtimestamp(expires_at).strftime("%d-%m-%Y")
-    body = (
-        "Bedankt voor je aankoop bij de fajaede Developer API.\n\n"
-        f"Product: {plan['name']}-pas, {days} dagen ({plan['daily_limit']} requests per dag)\n"
-        f"Bedrag: EUR {amount.replace('.', ',')} (inclusief btw)\n"
-        f"Geldig tot en met: {until}\n"
-        f"Bestelnummer: {order_id}\n"
-        f"Mollie-betaling: {payment_id}\n\n"
-        "De pas is direct actief op je API-key en wordt niet automatisch verlengd.\n"
-        "Wat je pakket je oplevert en hoe je je gebruik volgt: "
-        "https://api.fajaede.eu/developers#wat-krijg-je\n\n"
+    days = order["days"]
+    is_business = bool(order.get("invoice_vat"))
+    invoice_block = ""
+    withdrawal = (
         "Je hebt uitdrukkelijk gevraagd dat de pas direct start. Ben je consument, dan kun je "
         "binnen 14 dagen na aankoop herroepen door te mailen naar info@fajaede.nl; je betaalt "
         "dan alleen voor de dagen die al verstreken zijn (art. VI.51 Wetboek van economisch recht).\n\n"
-        f"Algemene voorwaarden (versie {TERMS_VERSION}): https://www.fajaede.eu/algemene-voorwaarden\n\n"
+    )
+    if is_business:
+        invoice_block = (
+            "Factuurgegevens:\n"
+            f"  {order['invoice_name']}\n"
+            f"  {order['invoice_address']}\n"
+            f"  Btw-nummer: {order['invoice_vat']}\n"
+            "Je factuur ontvang je binnen 5 werkdagen.\n\n"
+        )
+        withdrawal = ""
+    body = (
+        "Bedankt voor je aankoop bij de fajaede Developer API.\n\n"
+        f"Product: {plan['name']}-pas, {days} dagen ({plan['daily_limit']} requests per dag)\n"
+        + _amount_lines(order)
+        + f"Geldig tot en met: {until}\n"
+        f"Bestelnummer: {order_id}\n"
+        f"Mollie-betaling: {payment_id}\n\n"
+        + invoice_block
+        + "De pas is direct actief op je API-key en wordt niet automatisch verlengd.\n"
+        "Wat je pakket je oplevert en hoe je je gebruik volgt: "
+        "https://api.fajaede.eu/developers#wat-krijg-je\n\n"
+        + withdrawal
+        + f"Algemene voorwaarden (versie {TERMS_VERSION}): https://www.fajaede.eu/algemene-voorwaarden\n\n"
         "fajaedeAI+ - Lodewijk de Koninckstraat 31, 2600 Berchem, België - BE1032407424\n"
     )
     try:
@@ -845,5 +981,30 @@ async def _send_developer_confirmation(
         # The pass is already active; never fail the webhook over the email.
         logger.exception("Could not send developer purchase confirmation for order %s", order_id)
 
+    if is_business:
+        await _notify_invoice_needed(order_id, payment_id, email, plan, order)
+
+
+async def _notify_invoice_needed(order_id: str, payment_id: str, email: str, plan: dict, order: dict) -> None:
+    """Tell the owner a business bought a pass, with everything needed for the (Peppol) invoice."""
+    recipient = os.getenv("INVOICE_NOTIFY_EMAIL", "").strip() or os.getenv("SMTP_FROM", "").strip()
+    if not recipient:
+        logger.warning("No INVOICE_NOTIFY_EMAIL/SMTP_FROM; cannot request invoice for order %s", order_id)
+        return
+    body = (
+        "Een bedrijf heeft een Developer API-pas gekocht. Maak hiervoor een factuur.\n\n"
+        f"Klant:       {order['invoice_name']}\n"
+        f"Adres:       {order['invoice_address']}\n"
+        f"Btw-nummer:  {order['invoice_vat']} (geldig volgens VIES)\n"
+        f"E-mail:      {email}\n\n"
+        f"Product:     {plan['name']}-pas, {order['days']} dagen\n"
+        + _amount_lines(order)
+        + f"Betaald op:  {datetime.now().strftime('%d-%m-%Y')} via Mollie ({payment_id})\n"
+        f"Bestelnummer: {order_id}\n"
+    )
+    try:
+        await asyncio.to_thread(send_email, f"Factuur maken: {order['invoice_name']} ({plan['name']})", recipient, body)
+    except (OSError, RuntimeError, ValueError):
+        logger.exception("Could not send invoice notification for order %s", order_id)
 
 init_db()
