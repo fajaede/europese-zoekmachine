@@ -991,9 +991,18 @@ async def _notify_invoice_needed(order_id: str, payment_id: str, email: str, pla
     if not recipient:
         logger.warning("No INVOICE_NOTIFY_EMAIL/SMTP_FROM; cannot request invoice for order %s", order_id)
         return
+    is_test = order.get("mode") != "live"
+    intro = (
+        "TESTBETALING (Mollie testmodus): er is geen geld ontvangen. Maak hiervoor GEEN factuur.\n\n"
+        if is_test
+        else "Een bedrijf heeft een Developer API-pas gekocht. Maak hiervoor een factuur.\n\n"
+    )
+    subject = f"Factuur maken: {order['invoice_name']} ({plan['name']})"
+    if is_test:
+        subject = f"[TEST - geen factuur] {subject}"
     body = (
-        "Een bedrijf heeft een Developer API-pas gekocht. Maak hiervoor een factuur.\n\n"
-        f"Klant:       {order['invoice_name']}\n"
+        intro
+        + f"Klant:       {order['invoice_name']}\n"
         f"Adres:       {order['invoice_address']}\n"
         f"Btw-nummer:  {order['invoice_vat']} (geldig volgens VIES)\n"
         f"E-mail:      {email}\n\n"
@@ -1003,7 +1012,7 @@ async def _notify_invoice_needed(order_id: str, payment_id: str, email: str, pla
         f"Bestelnummer: {order_id}\n"
     )
     try:
-        await asyncio.to_thread(send_email, f"Factuur maken: {order['invoice_name']} ({plan['name']})", recipient, body)
+        await asyncio.to_thread(send_email, subject, recipient, body)
     except (OSError, RuntimeError, ValueError):
         logger.exception("Could not send invoice notification for order %s", order_id)
 

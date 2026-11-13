@@ -310,6 +310,7 @@ class DeveloperPlanTests(unittest.TestCase):
         self.assertIn("Btw verlegd", customer_mail[2])
         self.assertNotIn("herroepen", customer_mail[2])
         self.assertEqual(owner_mail[1], "owner@example.com")
+        self.assertTrue(owner_mail[0].startswith("[TEST - geen factuur]"))  # test-mode payment
         self.assertIn("NL123456789B01", owner_mail[2])
         self.assertEqual(developer_api.active_plan(self._key_row())[0], "premium")
 
