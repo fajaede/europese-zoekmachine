@@ -34,7 +34,7 @@ from fastapi import (
 
 )
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import RedirectResponse, HTMLResponse, FileResponse
+from fastapi.responses import RedirectResponse, HTMLResponse, FileResponse, Response
 from meilisearch_python_async import (
     Client as AsyncMeiliClient,
     errors as meili_errors,
@@ -50,6 +50,7 @@ from backend.seo_geo_audit import (
 )
 from api.routes.builder import init_builder_storage
 from api.client_ip import client_ip as shared_client_ip
+from api import accounting_report
 from api.routes.builder import router as builder_router
 
 # Local application imports
@@ -176,7 +177,22 @@ async def lifespan(fastapi_app: FastAPI):
 
     init_builder_storage()
 
+    async def accounting_report_loop():
+        # Every 30 minutes: send the weekly accounting report when it is due (Thursday).
+        while True:
+            try:
+                result = await asyncio.to_thread(accounting_report.maybe_send_weekly_report)
+                if result.startswith("sent"):
+                    print(f"Weekly accounting report: {result}")
+            except Exception as exc:  # pylint: disable=broad-exception-caught
+                print(f"Weekly accounting report check failed: {type(exc).__name__}")
+            await asyncio.sleep(1800)
+
+    report_task = asyncio.create_task(accounting_report_loop())
+
     yield
+
+    report_task.cancel()
 
 
 # Basis FastAPI-app initialisatie
@@ -251,6 +267,28 @@ async def developer_dashboard():
             "Cache-Control": "no-store",
         },
     )
+
+@app.get("/api/admin/accounting-report")
+async def admin_accounting_report(request: Request, days: int = 7, send: bool = False):
+    """Admin only (X-Admin-Key): download the fajaede.eu sales CSV of the last `days` days,
+    or email it to ACCOUNTANT_EMAIL right away with ?send=true. Does not affect the weekly schedule."""
+    require_admin_key(request)
+    days = max(1, min(days, 400))
+    until = int(time.time())
+    since = until - days * 86400
+    if send:
+        recipient = accounting_report.accountant_email()
+        if not recipient:
+            raise HTTPException(status_code=400, detail="ACCOUNTANT_EMAIL is niet ingesteld.")
+        sales = await asyncio.to_thread(accounting_report.send_report, since, until, recipient)
+        return {"sent_to": recipient, "sales": sales, "days": days}
+    rows = await asyncio.to_thread(accounting_report.collect_rows, since, until)
+    return Response(
+        content=accounting_report.build_csv(rows),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="fajaede-eu-verkopen-{days}d.csv"', "Cache-Control": "no-store"},
+    )
+
 
 @app.get("/health")
 def health_check():

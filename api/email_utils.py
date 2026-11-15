@@ -6,8 +6,16 @@ import ssl
 from email.message import EmailMessage
 
 
-def send_email(subject: str, recipient: str, body: str) -> None:
-    """Send a plain-text email using the configured SMTP account."""
+def send_email(
+    subject: str,
+    recipient: str,
+    body: str,
+    attachments: list[tuple[str, bytes, str]] | None = None,
+) -> None:
+    """Send a plain-text email using the configured SMTP account.
+
+    attachments: optional list of (filename, content, mime type such as "text/csv").
+    """
     host = os.getenv("SMTP_HOST", "").strip()
     sender = os.getenv("SMTP_FROM", "").strip()
     username = os.getenv("SMTP_USER", "").strip()
@@ -26,6 +34,9 @@ def send_email(subject: str, recipient: str, body: str) -> None:
     message["From"] = sender
     message["To"] = recipient
     message.set_content(body)
+    for filename, content, mime_type in attachments or []:
+        maintype, _, subtype = mime_type.partition("/")
+        message.add_attachment(content, maintype=maintype, subtype=subtype or "octet-stream", filename=filename)
 
     context = ssl.create_default_context()
     if port == 465:

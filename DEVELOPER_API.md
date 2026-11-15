@@ -209,6 +209,15 @@ Gebruikt dezelfde `MOLLIE_API_KEY` en `MOLLIE_MODE` als de builder. De webhook i
 ### Bedrijven en btw
 Checkout accepteert optioneel `business`, `company_name`, `vat_number` en `company_address`. Het btw-nummer wordt via VIES gecontroleerd (bij storing: 503, geen betaling). Belgische bedrijven betalen de prijs incl. 21% btw; andere EU-bedrijven met geldig nummer de prijs excl. btw (btw verlegd). Na betaling krijgt `INVOICE_NOTIFY_EMAIL` (standaard `SMTP_FROM`) een mail met alle factuurgegevens; de factuur zelf (Peppol) maak je in je boekhoudpakket.
 
+### Weekrapport voor de boekhouder (fajaede.eu)
+Elke donderdag (of de eerste controle daarna; de backend kijkt elk half uur) mailt de backend een CSV met alle **betaalde live**-verkopen van Builder en Developer API sinds het vorige rapport naar `ACCOUNTANT_EMAIL` (val terug op `INVOICE_NOTIFY_EMAIL`, dan `SMTP_FROM`). Zelfde kolommen als het weekrapport van de FajaedeSEO-plugin. Testbetalingen tellen niet mee; geen verkopen = korte mail "No sales".
+
+Handmatig bekijken of versturen (alleen met `X-Admin-Key`):
+```bash
+curl -H "X-Admin-Key: $ADMIN_API_KEY" "https://api.fajaede.eu/api/admin/accounting-report?days=7" -o verkopen.csv
+curl -H "X-Admin-Key: $ADMIN_API_KEY" "https://api.fajaede.eu/api/admin/accounting-report?days=7&send=true"
+```
+
 ## Database Schema
 
 ### api_keys tabel
