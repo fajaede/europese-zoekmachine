@@ -13,7 +13,7 @@ import logging
 import os
 import sqlite3
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import ROUND_HALF_UP, Decimal
 
 from api import developer_api
@@ -196,8 +196,17 @@ def _runs_table(conn: sqlite3.Connection) -> None:
     )
 
 
+def _this_weeks_thursday(now: int) -> int | None:
+    """Unix time of Thursday 00:00 (Brussels) of the current week, or None before Thursday."""
+    local = datetime.fromtimestamp(now, LOCAL_TZ)
+    if local.weekday() < 3:  # Monday-Wednesday
+        return None
+    thursday = (local - timedelta(days=local.weekday() - 3)).replace(hour=0, minute=0, second=0, microsecond=0)
+    return int(thursday.timestamp())
+
+
 def maybe_send_weekly_report(now: int | None = None) -> str:
-    """Send the weekly report when due (Thursday-Sunday, at least 6 days after the previous one).
+    """Send the weekly report once per week, from Thursday on (Brussels time).
 
     Safe to call often and from several workers: a run is claimed in the database first.
     """
@@ -205,7 +214,8 @@ def maybe_send_weekly_report(now: int | None = None) -> str:
     recipient = accountant_email()
     if not recipient:
         return "no recipient"
-    if datetime.fromtimestamp(now, LOCAL_TZ).weekday() < 3:  # Mon-Wed: wait for Thursday
+    thursday = _this_weeks_thursday(now)
+    if thursday is None:
         return "not thursday yet"
 
     conn = developer_api.get_db()
@@ -216,7 +226,7 @@ def maybe_send_weekly_report(now: int | None = None) -> str:
             "SELECT period_end, created_at FROM accounting_report_runs WHERE status IN ('sent', 'sending') "
             "ORDER BY id DESC LIMIT 1"
         ).fetchone()
-        if last and now - last["created_at"] < 6 * 86400:
+        if last and last["created_at"] >= thursday:  # this week's report is already out
             conn.rollback()
             return "already sent"
         since = last["period_end"] if last else now - WEEK  # no gaps between two reports

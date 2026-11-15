@@ -109,6 +109,17 @@ class AccountingReportTests(unittest.TestCase):
         self.assertEqual(mime, "text/csv")
         self.assertEqual(len(self._rows(content)), 4)  # header + 3 sales
 
+    def test_after_a_sunday_start_the_next_report_comes_on_thursday(self):
+        sunday = THURSDAY - 4 * 86400  # 15-11-2026, like the first deploy
+        with patch.object(accounting_report, "send_email"):
+            self.assertTrue(accounting_report.maybe_send_weekly_report(sunday).startswith("sent"))
+        with patch.object(accounting_report, "send_report", return_value=0) as send:
+            self.assertEqual(accounting_report.maybe_send_weekly_report(MONDAY), "not thursday yet")
+            self.assertEqual(accounting_report.maybe_send_weekly_report(THURSDAY - 13 * 3600), "not thursday yet")  # Wed 23:00
+            self.assertEqual(accounting_report.maybe_send_weekly_report(THURSDAY), "sent (0 sales)")  # Thursday, not Saturday
+            self.assertEqual(accounting_report.maybe_send_weekly_report(THURSDAY + 2 * 86400), "already sent")
+        self.assertEqual(send.call_args.args[0], sunday)  # continues where the Sunday report ended
+
     def test_next_report_starts_where_the_previous_ended(self):
         with patch.object(accounting_report, "send_email"):
             accounting_report.maybe_send_weekly_report(THURSDAY)
