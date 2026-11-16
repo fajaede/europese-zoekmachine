@@ -170,7 +170,7 @@ def accountant_recipients() -> list[str]:
     )
     seen: list[str] = []
     for part in raw.replace(";", ",").split(","):
-        address = part.strip()
+        address = part.strip().strip("<>\"' ")  # tolerate <a@b.c> or "a@b.c" in the .env
         if address and "@" in address and address.lower() not in (s.lower() for s in seen):
             seen.append(address)
     return seen
