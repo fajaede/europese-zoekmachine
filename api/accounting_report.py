@@ -15,8 +15,10 @@ import os
 import sqlite3
 import time
 from datetime import datetime, timedelta, timezone
+import re
 from decimal import ROUND_HALF_UP, Decimal
-from email.utils import getaddresses
+
+EMAIL_RE = re.compile(r"[^@\s<>\"',;]+@[^@\s<>\"',;]+\.[^@\s<>\"',;]+")
 
 from api import developer_api
 from api.email_utils import send_email
@@ -169,11 +171,14 @@ def accountant_recipients() -> list[str]:
         or os.getenv("INVOICE_NOTIFY_EMAIL", "").strip()
         or os.getenv("SMTP_FROM", "").strip()
     )
-    # Standard address parsing: accepts a@b.c, <a@b.c>, "Name <a@b.c>" and comma/semicolon lists.
+    # Accepts a@b.c, <a@b.c>, "Name" <a@b.c>, Name <a@b.c> and comma/semicolon separated lists,
+    # also when the whole list is wrapped in <...>.
     seen: list[str] = []
-    for _name, address in getaddresses([raw.replace(";", ",").replace("<", " <").strip("\"'")]):
-        address = address.strip().strip("<>\"' ")
-        if address and "@" in address and address.lower() not in (s.lower() for s in seen):
+    for part in re.split(r"[,;]", raw):
+        part = part.strip()
+        bracketed = re.search(r"<([^<>]+)>", part)
+        address = (bracketed.group(1) if bracketed else part).strip().strip("<>\"' ")
+        if EMAIL_RE.fullmatch(address) and address.lower() not in (s.lower() for s in seen):
             seen.append(address)
     return seen
 
