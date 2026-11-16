@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import csv
 import io
+import zipfile
 import logging
 import os
 import sqlite3
@@ -160,28 +161,67 @@ def build_csv(rows: list[list[str]]) -> bytes:
     return ("﻿" + buffer.getvalue()).encode("utf-8")  # BOM so Excel opens it as UTF-8
 
 
-def accountant_email() -> str:
-    return (
+def accountant_recipients() -> list[str]:
+    """ACCOUNTANT_EMAIL may hold several addresses separated by commas (e.g. accountant + owner)."""
+    raw = (
         os.getenv("ACCOUNTANT_EMAIL", "").strip()
         or os.getenv("INVOICE_NOTIFY_EMAIL", "").strip()
         or os.getenv("SMTP_FROM", "").strip()
     )
+    seen: list[str] = []
+    for part in raw.replace(";", ",").split(","):
+        address = part.strip()
+        if address and "@" in address and address.lower() not in (s.lower() for s in seen):
+            seen.append(address)
+    return seen
 
 
-def send_report(since: int, until: int, recipient: str) -> int:
-    """Email the report for [since, until) to recipient; returns the number of sales."""
+def accountant_email() -> str:
+    """All report recipients as one readable string (empty when none is configured)."""
+    return ", ".join(accountant_recipients())
+
+
+def _invoices_zip(since: int, until: int) -> tuple[str, bytes] | None:
+    """ZIP with the PDF of every real (EU-...) live invoice issued in [since, until)."""
+    from api import invoices  # pylint: disable=import-outside-toplevel
+
+    conn = invoices._db()  # pylint: disable=protected-access
+    try:
+        rows = [dict(r) for r in conn.execute(
+            "SELECT * FROM eu_invoices WHERE mode = 'live' AND invoice_number LIKE 'EU-%' "
+            "AND created_at >= ? AND created_at < ? ORDER BY invoice_year, invoice_seq",
+            (since, until),
+        )]
+    finally:
+        conn.close()
+    if not rows:
+        return None
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+        for invoice in rows:
+            archive.writestr(invoices.pdf_filename(invoice), invoices.render_pdf(invoice))
+    return f"fajaede-eu-facturen-{datetime.fromtimestamp(until, LOCAL_TZ):%Y-%m-%d}.zip", buffer.getvalue()
+
+
+def send_report(since: int, until: int, recipients: list[str] | str) -> int:
+    """Email the report for [since, until) to every recipient (one mail each); returns the number of sales."""
+    if isinstance(recipients, str):
+        recipients = [r.strip() for r in recipients.split(",") if r.strip()]
     rows = collect_rows(since, until)
     period = f"{_local(since)[:10]} tot {_local(until)[:10]}"
     if not rows:
-        send_email(
-            f"fajaede.eu - Weekly Sales Report (No sales this week) ({period})",
-            recipient,
-            f"Geen verkopen op fajaede.eu (Builder en Developer API) van {period}.\n",
-        )
+        for recipient in recipients:
+            send_email(
+                f"fajaede.eu - Weekly Sales Report (No sales this week) ({period})",
+                recipient,
+                f"Geen verkopen op fajaede.eu (Builder en Developer API) van {period}.\n",
+            )
         return 0
+    invoice_zip = _invoices_zip(since, until)
     body = (
         f"In de bijlage de verkopen van fajaede.eu (Builder en Developer API) van {period}.\n\n"
-        "Zelfde kolommen als het weekrapport van de FajaedeSEO-plugin.\n"
+        + ("Alle facturen van deze periode zitten als PDF in het zip-bestand.\n\n" if invoice_zip else "")
+        + "Zelfde kolommen als het weekrapport van de FajaedeSEO-plugin.\n"
         "- EU-JJJJ-NNNN: factuur die de website zelf verstuurt (particulieren en buitenlandse bedrijven).\n"
         "- PEPPOL-NNNN: Belgisch bedrijf; die factuur wordt via Peppol vanuit het boekhoudprogramma verstuurd.\n"
         "- Particulieren betalen inclusief 21% Belgische btw. Hun land wordt niet gevraagd\n"
@@ -189,12 +229,16 @@ def send_report(since: int, until: int, recipient: str) -> int:
         "- Testbetalingen (Mollie testmodus) zijn niet opgenomen.\n"
     )
     filename = f"fajaede-eu-verkopen-{datetime.fromtimestamp(until, LOCAL_TZ):%Y-%m-%d}.csv"
-    send_email(
-        f"fajaede.eu - Weekly Sales Report ({period})",
-        recipient,
-        body,
-        attachments=[(filename, build_csv(rows), "text/csv")],
-    )
+    attachments = [(filename, build_csv(rows), "text/csv")]
+    if invoice_zip:
+        attachments.append((invoice_zip[0], invoice_zip[1], "application/zip"))
+    for recipient in recipients:
+        send_email(
+            f"fajaede.eu - Weekly Sales Report ({period})",
+            recipient,
+            body,
+            attachments=attachments,
+        )
     return len(rows)
 
 

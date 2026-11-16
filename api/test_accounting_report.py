@@ -135,6 +135,25 @@ class AccountingReportTests(unittest.TestCase):
             self.assertEqual(accounting_report.maybe_send_weekly_report(THURSDAY + 1800), "sent (3 sales)")
         self.assertEqual(mail.call_count, 1)
 
+    def test_multiple_recipients_and_invoice_zip(self):
+        from api import invoices  # pylint: disable=import-outside-toplevel
+        invoices.issue_invoice(mollie_id="tr_builder_live", order_id="b1", product="builder", description="Builder",
+                               amount="5.00", mode="live", customer_email="klant@example.com")
+        invoices.issue_invoice(mollie_id="tr_test_x", order_id="bx", product="builder", description="Builder",
+                               amount="5.00", mode="test", customer_email="klant@example.com")
+        with patch.dict(os.environ, {"ACCOUNTANT_EMAIL": "boekhouder@example.com, fajaede@live.nl; boekhouder@example.com"}):
+            self.assertEqual(accounting_report.accountant_recipients(), ["boekhouder@example.com", "fajaede@live.nl"])
+            with patch.object(accounting_report, "send_email") as mail:
+                accounting_report.send_report(THURSDAY - 7 * 86400, THURSDAY + 86400 * 400, accounting_report.accountant_email())
+        self.assertEqual([c.args[1] for c in mail.call_args_list], ["boekhouder@example.com", "fajaede@live.nl"])
+        attachments = mail.call_args.kwargs["attachments"]
+        self.assertEqual([a[2] for a in attachments], ["text/csv", "application/zip"])
+        import zipfile as _zip  # pylint: disable=import-outside-toplevel
+        names = _zip.ZipFile(io.BytesIO(attachments[1][1])).namelist()
+        self.assertEqual(len(names), 1)  # only the live EU invoice, not the TEST one
+        self.assertTrue(names[0].startswith("Factuur_EU-"))
+        self.assertIn("zip-bestand", mail.call_args.args[2])
+
     def test_no_sales_sends_short_mail(self):
         with patch.object(accounting_report, "send_email") as mail:
             accounting_report.send_report(0, 1000, "boekhouder@example.com")
