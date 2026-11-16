@@ -69,11 +69,11 @@ def _local(ts: int) -> str:
 
 
 def _row(*, payment_id, plan, country_code, customer_type, amount, reverse, paid_at, customer,
-         address="", vat_number="") -> list[str]:
+         address="", vat_number="", invoice_number="") -> list[str]:
     excl, vat, total, rate = _split_vat(amount, reverse)
     known_country = bool(country_code)
     return [
-        "",  # fajaede.eu has no own invoice numbers: B2B invoices are made in the accounting software
+        _cell(invoice_number),  # EU-YYYY-NNNN, or PEPPOL-NNNN when the invoice comes via Peppol
         _cell(payment_id or ""),
         _cell(plan),
         country_code or "",
@@ -86,9 +86,21 @@ def _row(*, payment_id, plan, country_code, customer_type, amount, reverse, paid
     ]
 
 
+def _invoice_numbers() -> dict[str, str]:
+    """Mollie payment id -> invoice number (EU-... or PEPPOL-...)."""
+    from api import invoices  # pylint: disable=import-outside-toplevel
+
+    conn = invoices._db()  # pylint: disable=protected-access
+    try:
+        return {r["mollie_id"]: r["invoice_number"] for r in conn.execute("SELECT mollie_id, invoice_number FROM eu_invoices")}
+    finally:
+        conn.close()
+
+
 def collect_rows(since: int, until: int) -> list[list[str]]:
     """All paid live payments of both products with granted_at in [since, until)."""
     rows: list[tuple[int, list[str]]] = []
+    numbers = _invoice_numbers()
 
     conn = builder._connect()  # pylint: disable=protected-access
     try:
@@ -104,6 +116,7 @@ def collect_rows(since: int, until: int) -> list[list[str]]:
                 payment_id=p["mollie_id"], plan=f"Builder: {p['credits']} credits", country_code="",
                 customer_type="particulier", amount=p["amount"], reverse=False,
                 paid_at=p["granted_at"], customer=p["email"] or "",
+                invoice_number=numbers.get(p["mollie_id"], ""),
             )))
     except sqlite3.OperationalError:
         logger.info("No builder payments table yet")
@@ -129,6 +142,7 @@ def collect_rows(since: int, until: int) -> list[list[str]]:
                 amount=p["amount"], reverse=bool(p["reverse_charge"]), paid_at=p["granted_at"],
                 customer=p["invoice_name"] if is_business else (p["email"] or ""),
                 address=p["invoice_address"] or "", vat_number=p["invoice_vat"] or "",
+                invoice_number=numbers.get(p["mollie_id"], ""),
             )))
     except sqlite3.OperationalError:
         logger.info("No developer payments table yet")
@@ -168,9 +182,10 @@ def send_report(since: int, until: int, recipient: str) -> int:
     body = (
         f"In de bijlage de verkopen van fajaede.eu (Builder en Developer API) van {period}.\n\n"
         "Zelfde kolommen als het weekrapport van de FajaedeSEO-plugin.\n"
-        "- Particulieren: geen factuur; de bedragen zijn inclusief 21% Belgische btw.\n"
-        "  Het land van particulieren wordt niet gevraagd (onder de OSS-drempel geldt Belgische btw).\n"
-        "- Bedrijven: factuur wordt apart opgemaakt; klantnaam, adres en btw-nummer staan in het rapport.\n"
+        "- EU-JJJJ-NNNN: factuur die de website zelf verstuurt (particulieren en buitenlandse bedrijven).\n"
+        "- PEPPOL-NNNN: Belgisch bedrijf; die factuur wordt via Peppol vanuit het boekhoudprogramma verstuurd.\n"
+        "- Particulieren betalen inclusief 21% Belgische btw. Hun land wordt niet gevraagd\n"
+        "  (onder de OSS-drempel geldt Belgische btw).\n"
         "- Testbetalingen (Mollie testmodus) zijn niet opgenomen.\n"
     )
     filename = f"fajaede-eu-verkopen-{datetime.fromtimestamp(until, LOCAL_TZ):%Y-%m-%d}.csv"

@@ -305,13 +305,15 @@ class DeveloperPlanTests(unittest.TestCase):
         ):
             asyncio.run(developer_api.developer_mollie_webhook(FakeRequest()))
 
-        self.assertEqual(send_email_mock.call_count, 2)
-        customer_mail, owner_mail = (call.args for call in send_email_mock.call_args_list)
+        # A business in another EU country gets the website invoice (reverse charge): no Peppol mail to the owner.
+        self.assertEqual(send_email_mock.call_count, 1)
+        customer_mail = send_email_mock.call_args.args
         self.assertIn("Btw verlegd", customer_mail[2])
         self.assertNotIn("herroepen", customer_mail[2])
-        self.assertEqual(owner_mail[1], "owner@example.com")
-        self.assertTrue(owner_mail[0].startswith("[TEST - geen factuur]"))  # test-mode payment
-        self.assertIn("NL123456789B01", owner_mail[2])
+        self.assertIn("TEST-0001", customer_mail[2])  # test-mode payment: test series
+        attachment_name, pdf, mime = send_email_mock.call_args.args[3][0]
+        self.assertEqual((attachment_name, mime), ("Factuur_TEST-0001.pdf", "application/pdf"))
+        self.assertTrue(pdf.startswith(b"%PDF"))
         self.assertEqual(developer_api.active_plan(self._key_row())[0], "premium")
 
     def test_registration_mail_is_limited_per_email_across_ips(self):

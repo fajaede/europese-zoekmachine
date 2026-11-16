@@ -941,11 +941,44 @@ def _amount_lines(order: dict) -> str:
 async def _send_developer_confirmation(
     order_id: str, payment_id: str, email: str, plan: dict, order: dict, expires_at: int
 ) -> None:
-    """Confirm the purchase on a durable medium and ask the owner to invoice businesses (best effort)."""
+    """Confirm the purchase on a durable medium with the invoice; Belgian businesses get theirs via Peppol."""
+    from api import invoices  # pylint: disable=import-outside-toplevel  # avoids a circular import
+
     until = datetime.fromtimestamp(expires_at).strftime("%d-%m-%Y")
     days = order["days"]
     is_business = bool(order.get("invoice_vat"))
-    invoice_block = ""
+    peppol = invoices.is_peppol_customer(order.get("invoice_vat"))
+
+    invoice = None
+    attachments = []
+    try:
+        invoice = await asyncio.to_thread(
+            invoices.issue_invoice,
+            mollie_id=payment_id,
+            order_id=order_id,
+            product="developer",
+            description=f"fajaede Developer API: {plan['name']}-pas, {days} dagen ({plan['daily_limit']} requests/dag)",
+            amount=order["amount"],
+            mode=order.get("mode") or "live",
+            customer_email=email,
+            customer_name=order.get("invoice_name") or email,
+            customer_address=order.get("invoice_address") or "",
+            customer_vat=order.get("invoice_vat") or "",
+            reverse_charge=bool(order.get("reverse_charge")),
+        )
+        if invoices.is_real_invoice(invoice):
+            attachments.append((invoices.pdf_filename(invoice), invoices.render_pdf(invoice), "application/pdf"))
+    except Exception:  # pylint: disable=broad-exception-caught
+        logger.exception("Could not create invoice for developer order %s", order_id)
+
+    if peppol:
+        invoice_note = "Je factuur ontvang je binnen 5 werkdagen via Peppol.\n"
+    elif attachments:
+        invoice_note = f"Factuurnummer: {invoice['invoice_number']} (de factuur zit als PDF in de bijlage)\n"
+    else:
+        invoice_note = "Je factuur ontvang je binnen 5 werkdagen.\n"
+
+    invoice_block = invoice_note + "\n"
     withdrawal = (
         "Je hebt uitdrukkelijk gevraagd dat de pas direct start. Ben je consument, dan kun je "
         "binnen 14 dagen na aankoop herroepen door te mailen naar info@fajaede.nl; je betaalt "
@@ -957,7 +990,7 @@ async def _send_developer_confirmation(
             f"  {order['invoice_name']}\n"
             f"  {order['invoice_address']}\n"
             f"  Btw-nummer: {order['invoice_vat']}\n"
-            "Je factuur ontvang je binnen 5 werkdagen.\n\n"
+            + invoice_note + "\n"
         )
         withdrawal = ""
     body = (
@@ -975,13 +1008,17 @@ async def _send_developer_confirmation(
         + f"Algemene voorwaarden (versie {TERMS_VERSION}): https://www.fajaede.eu/algemene-voorwaarden\n\n"
         "fajaede - Lodewijk de Koninckstraat 31, 2600 Berchem, België - BE1032407424\n"
     )
+    subject = f"Bevestiging: {plan['name']}-pas fajaede Developer API"
+    if attachments:
+        subject += f" (factuur {invoice['invoice_number']})"
     try:
-        await asyncio.to_thread(send_email, f"Bevestiging: {plan['name']}-pas fajaede Developer API", email, body)
+        await asyncio.to_thread(send_email, subject, email, body, attachments or None)
     except (OSError, RuntimeError, ValueError):
         # The pass is already active; never fail the webhook over the email.
         logger.exception("Could not send developer purchase confirmation for order %s", order_id)
 
-    if is_business:
+    if peppol:
+        # Belgian businesses: the invoice must go via Peppol from the accounting software.
         await _notify_invoice_needed(order_id, payment_id, email, plan, order)
 
 
@@ -995,9 +1032,10 @@ async def _notify_invoice_needed(order_id: str, payment_id: str, email: str, pla
     intro = (
         "TESTBETALING (Mollie testmodus): er is geen geld ontvangen. Maak hiervoor GEEN factuur.\n\n"
         if is_test
-        else "Een bedrijf heeft een Developer API-pas gekocht. Maak hiervoor een factuur.\n\n"
+        else "Een Belgisch bedrijf heeft een Developer API-pas gekocht. Maak de factuur in je "
+        "boekhoudprogramma en verstuur hem via Peppol (binnen 5 werkdagen).\n\n"
     )
-    subject = f"Factuur maken: {order['invoice_name']} ({plan['name']})"
+    subject = f"Factuur maken via Peppol: {order['invoice_name']} ({plan['name']})"
     if is_test:
         subject = f"[TEST - geen factuur] {subject}"
     body = (

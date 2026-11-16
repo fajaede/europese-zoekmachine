@@ -905,21 +905,44 @@ async def mollie_webhook(request: Request) -> dict[str, str]:
         connection.close()
 
     if confirmation_email:
-        await _send_purchase_confirmation(confirmation_email, payment_id, order_id)
+        await _send_purchase_confirmation(confirmation_email, payment_id, order_id, mode)
     return {"status": "ok"}
 
 
-async def _send_purchase_confirmation(email: str, payment_id: str, order_id: str) -> None:
-    """Confirm the purchase and the withdrawal waiver on a durable medium (best effort)."""
+async def _send_purchase_confirmation(email: str, payment_id: str, order_id: str, mode: str = "live") -> None:
+    """Confirm the purchase and the withdrawal waiver on a durable medium, with the invoice (best effort)."""
     try:
         public_url = _public_url()
     except HTTPException:
         public_url = "https://www.fajaede.eu"
+
+    invoice = None
+    attachments = []
+    try:
+        from api import invoices  # pylint: disable=import-outside-toplevel  # avoids a circular import
+
+        invoice = await asyncio.to_thread(
+            invoices.issue_invoice,
+            mollie_id=payment_id,
+            order_id=order_id,
+            product="builder",
+            description=f"fajaede Builder: {CREDIT_PACK_SIZE} credits (websitegeneraties)",
+            amount=CREDIT_PACK_PRICE,
+            mode=mode,
+            customer_email=email,
+            customer_name=email,
+        )
+        attachments.append((invoices.pdf_filename(invoice), invoices.render_pdf(invoice), "application/pdf"))
+    except Exception:  # pylint: disable=broad-exception-caught
+        # Credits are already granted; the invoice can be re-issued later from the same payment.
+        logger.exception("Could not create invoice for builder order %s", order_id)
+
     body = (
         "Bedankt voor je aankoop bij fajaede Builder.\n\n"
         f"Product: {CREDIT_PACK_SIZE} credits voor fajaede Builder\n"
         f"Bedrag: EUR {CREDIT_PACK_PRICE.replace('.', ',')} (inclusief btw)\n"
-        f"Bestelnummer: {order_id}\n"
+        + (f"Factuurnummer: {invoice['invoice_number']} (de factuur zit als PDF in de bijlage)\n" if invoice else "")
+        + f"Bestelnummer: {order_id}\n"
         f"Mollie-betaling: {payment_id}\n\n"
         "De credits zijn direct aan je account toegevoegd.\n\n"
         "Je hebt vóór de betaling uitdrukkelijk ingestemd met directe levering van deze "
@@ -931,9 +954,11 @@ async def _send_purchase_confirmation(email: str, payment_id: str, order_id: str
     try:
         await asyncio.to_thread(
             send_email,
-            "Bevestiging van je aankoop: 10 credits fajaede Builder",
+            "Bevestiging van je aankoop: 10 credits fajaede Builder"
+            + (f" (factuur {invoice['invoice_number']})" if invoice else ""),
             email,
             body,
+            attachments or None,
         )
     except (OSError, RuntimeError, ValueError):
         # Credits are already granted; never fail the webhook over the email.
