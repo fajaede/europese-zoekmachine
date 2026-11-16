@@ -141,8 +141,12 @@ class AccountingReportTests(unittest.TestCase):
                                amount="5.00", mode="live", customer_email="klant@example.com")
         invoices.issue_invoice(mollie_id="tr_test_x", order_id="bx", product="builder", description="Builder",
                                amount="5.00", mode="test", customer_email="klant@example.com")
-        with patch.dict(os.environ, {"ACCOUNTANT_EMAIL": "<info@vcaccountants.be,fajaede@live.nl>"}):
-            self.assertEqual(accounting_report.accountant_recipients(), ["info@vcaccountants.be", "fajaede@live.nl"])
+        for raw in ("<info@vcaccountants.be,fajaede@live.nl>", "info@vcaccountants.be, fajaede@live.nl",
+                    '"VC Accountants" <info@vcaccountants.be>, Fajaede <fajaede@live.nl>'):
+            with patch.dict(os.environ, {"ACCOUNTANT_EMAIL": raw}):
+                self.assertEqual(accounting_report.accountant_recipients(), ["info@vcaccountants.be", "fajaede@live.nl"], raw)
+        with patch.dict(os.environ, {"ACCOUNTANT_EMAIL": "", "INVOICE_NOTIFY_EMAIL": "", "SMTP_FROM": "Fajaede <info@fajaede.nl>"}):
+            self.assertEqual(accounting_report.accountant_recipients(), ["info@fajaede.nl"])  # fallback to SMTP_FROM
         with patch.dict(os.environ, {"ACCOUNTANT_EMAIL": "boekhouder@example.com, fajaede@live.nl; boekhouder@example.com"}):
             self.assertEqual(accounting_report.accountant_recipients(), ["boekhouder@example.com", "fajaede@live.nl"])
             with patch.object(accounting_report, "send_email") as mail:

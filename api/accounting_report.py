@@ -16,6 +16,7 @@ import sqlite3
 import time
 from datetime import datetime, timedelta, timezone
 from decimal import ROUND_HALF_UP, Decimal
+from email.utils import getaddresses
 
 from api import developer_api
 from api.email_utils import send_email
@@ -168,9 +169,10 @@ def accountant_recipients() -> list[str]:
         or os.getenv("INVOICE_NOTIFY_EMAIL", "").strip()
         or os.getenv("SMTP_FROM", "").strip()
     )
+    # Standard address parsing: accepts a@b.c, <a@b.c>, "Name <a@b.c>" and comma/semicolon lists.
     seen: list[str] = []
-    for part in raw.replace(";", ",").split(","):
-        address = part.strip().strip("<>\"' ")  # tolerate <a@b.c> or "a@b.c" in the .env
+    for _name, address in getaddresses([raw.replace(";", ",").replace("<", " <").strip("\"'")]):
+        address = address.strip().strip("<>\"' ")
         if address and "@" in address and address.lower() not in (s.lower() for s in seen):
             seen.append(address)
     return seen
