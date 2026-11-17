@@ -89,3 +89,6 @@ Thumbs.db
 *.working-*
 
 backend/developer_keys.db
+backend/benchmark.db
+backend/benchmark.db-wal
+backend/benchmark.db-shm

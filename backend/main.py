@@ -52,6 +52,8 @@ from api.routes.builder import init_builder_storage
 from api.client_ip import client_ip as shared_client_ip
 from api import accounting_report
 from api.routes.builder import router as builder_router
+from backend.benchmark import worker as benchmark_worker
+from backend.benchmark.routes import router as benchmark_router
 
 # Local application imports
 
@@ -190,9 +192,17 @@ async def lifespan(fastapi_app: FastAPI):
 
     report_task = asyncio.create_task(accounting_report_loop())
 
+    # Benchmark crawler: only when explicitly enabled (BENCHMARK_WORKER=1 in .env).
+    benchmark_task = None
+    if os.getenv("BENCHMARK_WORKER") == "1":
+        benchmark_task = asyncio.create_task(benchmark_worker.run_forever())
+        print("Benchmark worker gestart.")
+
     yield
 
     report_task.cancel()
+    if benchmark_task:
+        benchmark_task.cancel()
 
 
 # Basis FastAPI-app initialisatie
@@ -231,6 +241,7 @@ app.add_middleware(
 app.include_router(monitoring_router, prefix="/monitoring", tags=["Monitoring"])
 app.include_router(developer_router, prefix="/api/developers", tags=["Developers"])
 app.include_router(builder_router, prefix="/api/builder")
+app.include_router(benchmark_router)
 
 @app.get("/")
 def read_root():
