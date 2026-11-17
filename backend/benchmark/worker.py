@@ -396,8 +396,22 @@ def _housekeeping(recalculate: bool) -> None:
             store.recalculate_benchmarks(conn)
 
 
-async def run_forever(stop: asyncio.Event | None = None) -> None:
-    """Background loop: crawl due domains CONCURRENCY at a time; recalculate percentiles hourly."""
+async def process_job(job: dict[str, Any]) -> None:
+    """Crawl one claimed job and store the outcome (never raises)."""
+    try:
+        known = await asyncio.to_thread(_known, job["id"])
+        outcome = await asyncio.wait_for(crawl_domain(job, known), timeout=300)
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        outcome = {"category": job["category"], "language": None, "scores": None, "pages": [],
+                   "error": f"failed: {type(exc).__name__}"}
+    await asyncio.to_thread(_store_result, job, outcome)
+
+
+async def run_forever(stop: asyncio.Event | None = None, concurrency: int | None = None,
+                      idle_seconds: float = 60) -> None:
+    """Background crawler: a pool of `concurrency` workers that each take the next job as soon
+    as they finish one (a slow site no longer holds up the others), plus a housekeeping loop
+    that schedules due recrawls every minute and recalculates percentiles hourly."""
     await asyncio.to_thread(store.init)
 
     def _reset() -> None:
@@ -405,28 +419,40 @@ async def run_forever(stop: asyncio.Event | None = None) -> None:
             store.reset_stale_jobs(conn)
 
     await asyncio.to_thread(_reset)
-    last_recalc = 0.0
-    while not (stop and stop.is_set()):
-        loop_time = asyncio.get_running_loop().time()
-        recalc = loop_time - last_recalc > 3600
-        await asyncio.to_thread(_housekeeping, recalc)
-        if recalc:
-            last_recalc = loop_time
-        jobs = await asyncio.to_thread(_claim, CONCURRENCY)
-        if not jobs:
-            await asyncio.sleep(60)
-            continue
+    claim_lock = asyncio.Lock()   # one claim at a time: two workers never take the same job
 
-        async def run(job: dict[str, Any]) -> None:
+    def stopped() -> bool:
+        return bool(stop and stop.is_set())
+
+    async def housekeeping() -> None:
+        last_recalc = 0.0
+        while not stopped():
+            loop_time = asyncio.get_running_loop().time()
+            recalc = loop_time - last_recalc > 3600
             try:
-                known = await asyncio.to_thread(_known, job["id"])
-                outcome = await asyncio.wait_for(crawl_domain(job, known), timeout=300)
+                await asyncio.to_thread(_housekeeping, recalc)
+                if recalc:
+                    last_recalc = loop_time
             except Exception as exc:  # pylint: disable=broad-exception-caught
-                outcome = {"category": job["category"], "language": None, "scores": None, "pages": [],
-                           "error": f"failed: {type(exc).__name__}"}
-            await asyncio.to_thread(_store_result, job, outcome)
+                print(f"Benchmark housekeeping failed: {type(exc).__name__}")
+            await asyncio.sleep(idle_seconds)
 
-        await asyncio.gather(*(run(job) for job in jobs))
+    async def crawl_worker() -> None:
+        while not stopped():
+            async with claim_lock:
+                jobs = await asyncio.to_thread(_claim, 1)
+            if not jobs:
+                await asyncio.sleep(idle_seconds)
+                continue
+            await process_job(jobs[0])
+
+    workers = [asyncio.create_task(crawl_worker()) for _ in range(concurrency or CONCURRENCY)]
+    keeper = asyncio.create_task(housekeeping())
+    try:
+        await asyncio.gather(keeper, *workers)
+    finally:
+        for task in (keeper, *workers):
+            task.cancel()
 
 
 # --- seeding -------------------------------------------------------------------------------
@@ -448,14 +474,24 @@ async def domains_from_index(meili_index: Any, limit: int) -> list[dict[str, Any
     return list(found.values())[:limit]
 
 
+# Infrastructure domains in the Tranco list (DNS, CDN, ad/tracking servers): not websites.
+_INFRA = re.compile(r"awsdns|cloudfront|akamai|edgekey|edgesuite|azureedge|fastly|doubleclick|"
+                    r"(^|[.-])(cdn|dns|ntp\d*|ns\d+|adservice|tracking|telemetry)[.-]")
+
+
+def is_infrastructure(domain: str) -> bool:
+    return bool(_INFRA.search(domain.lower()))
+
+
 def parse_tranco(zip_bytes: bytes, limit: int, tlds: tuple[str, ...] = (".nl", ".be")) -> list[dict[str, Any]]:
-    """Top-ranked domains with the given TLDs; higher rank = higher crawl priority."""
+    """Top-ranked domains with the given TLDs; higher rank = higher crawl priority.
+    Infrastructure domains (DNS/CDN/tracking) are skipped."""
     out = []
     with zipfile.ZipFile(io.BytesIO(zip_bytes)) as archive:
         with archive.open(archive.namelist()[0]) as handle:
             for raw in io.TextIOWrapper(handle, encoding="utf-8"):
-                rank, _, domain = raw.strip().partition(",")
-                if domain.endswith(tlds):
+                _rank, _, domain = raw.strip().partition(",")
+                if domain.endswith(tlds) and not is_infrastructure(domain):
                     out.append({"domain": domain, "priority": max(1, 40 - len(out) // 250)})
                     if len(out) >= limit:
                         break

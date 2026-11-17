@@ -428,8 +428,45 @@ class CrawlerTests(unittest.TestCase):
     def test_parse_tranco_filters_tld(self):
         buffer = io.BytesIO()
         with zipfile.ZipFile(buffer, "w") as archive:
-            archive.writestr("top-1m.csv", "1,google.com\n2,nu.nl\n3,example.org\n4,vrt.be\n5,bol.com\n6,ad.nl\n")
+            archive.writestr("top-1m.csv", "1,google.com\n2,awsdns-eusc-37.nl\n3,nu.nl\n4,example.org\n"
+                                           "5,cdn-x.nl\n6,vrt.be\n7,bol.com\n8,ad.nl\n")
         self.assertEqual([d["domain"] for d in worker.parse_tranco(buffer.getvalue(), 2)], ["nu.nl", "vrt.be"])
+
+    def test_infrastructure_filter(self):
+        for domain in ("awsdns-eusc-37.nl", "x.cloudfront.be", "ns1-dns.nl", "ntp1.nl", "cdn.bol.nl", "cdn-x.nl"):
+            self.assertTrue(worker.is_infrastructure(domain), domain)
+        for domain in ("nu.nl", "dnsbelgium.be", "fajaede.nl", "gemeente-utrecht.nl", "pakkettracking.nl",
+                       "cdnow.nl"):
+            self.assertFalse(worker.is_infrastructure(domain), domain)
+
+    def test_pool_keeps_slots_busy(self):
+        """A slow domain must not hold up the others (no batch waiting)."""
+        tmp = tempfile.TemporaryDirectory()
+        path = os.path.join(tmp.name, "pool.db")
+        finished: list[str] = []
+
+        async def fake_process(job):
+            await asyncio.sleep(1.0 if job["root_domain"] == "traag.nl" else 0.05)
+            finished.append(job["root_domain"])
+            await asyncio.to_thread(worker._store_result, job, {"category": "mkb", "language": None,
+                                                                "scores": {"psa_score": 80}, "pages": [], "error": None})
+
+        async def main():
+            stop = asyncio.Event()
+            task = asyncio.create_task(worker.run_forever(stop, concurrency=2, idle_seconds=0.05))
+            await asyncio.sleep(0.6)
+            stop.set()
+            await asyncio.wait_for(task, timeout=5)
+
+        with patch.object(store, "DB_PATH", path), patch.object(worker, "process_job", fake_process):
+            store.init()
+            with store.connect() as conn:
+                store.add_domains(conn, [{"domain": "traag.nl", "priority": 9}]
+                                  + [{"domain": f"snel{i}.nl"} for i in range(6)], "list")
+            asyncio.run(main())
+        tmp.cleanup()
+        # While the slow site was still busy, the other slot handled all six fast sites.
+        self.assertEqual(sorted(finished[:6]), sorted(f"snel{i}.nl" for i in range(6)))
 
 
 if __name__ == "__main__":
