@@ -3,6 +3,7 @@
 import asyncio
 import io
 import os
+import sqlite3
 import tempfile
 import unittest
 import zipfile
@@ -41,6 +42,25 @@ class RulesTests(unittest.TestCase):
         self.assertLess(p("https://x.nl/shop?sort=price"), p("https://x.nl/shop"))
         self.assertLess(p("https://x.nl/tag/seo/"), p("https://x.nl/seo/"))
         self.assertGreater(p("https://x.nl/a", sitemap_priority=1.0), p("https://x.nl/a", sitemap_priority=0.1))
+
+    def test_recrawl_signals_in_priority(self):
+        p = lambda **kw: rules.url_priority("https://x.nl/pagina", now=NOW, **kw)  # noqa: E731
+        base = p()
+        self.assertEqual(p(is_new=True) - base, 15)
+        self.assertEqual(p(previous_status=404) - base, -60)
+        self.assertEqual(p(previous_status=301) - base, -20)
+        self.assertEqual(p(previous_status=200, previous_words=800) - base, 5)
+        self.assertEqual(p(previous_status=200, previous_words=50) - base, 0)       # thin page: no bonus
+        self.assertEqual(p(inlinks=2) - base, 6)
+        self.assertEqual(p(inlinks=50) - base, 15)                                   # capped
+        key = lambda **kw: rules.url_priority("https://x.nl/diensten/", now=NOW, **kw)  # noqa: E731
+        self.assertEqual(key(homepage_changed=True) - key(), 10)
+        self.assertEqual(p(homepage_changed=True) - base, 0)                        # not a key page
+
+    def test_backoff_days_table(self):
+        self.assertEqual([rules.backoff_days("blocked: robots.txt", n) for n in range(4)], [7, 30, 90, 90])
+        self.assertEqual(rules.backoff_days("blocked: HTTP 503", 0), 1)
+        self.assertEqual(rules.backoff_days("iets anders", 0), 30)
 
     def test_crawlable_urls(self):
         self.assertTrue(rules.is_crawlable_url("https://x.nl/over-ons"))
@@ -160,15 +180,77 @@ class StoreTests(unittest.TestCase):
             self.assertEqual(store.schedule_due(conn, NOW + timedelta(days=8)), 1)
             self.assertEqual(store.schedule_due(conn, NOW + timedelta(days=8)), 0)  # no duplicate job
 
-    def test_failed_and_blocked_domains_wait_longer(self):
+    def _fail_then(self, conn, domain, outcomes):
+        """Run consecutive crawls with the given errors (None = success); return pause days per run."""
+        store.add_domains(conn, [{"domain": domain}], "list")
+        domain_id = conn.execute("SELECT id FROM domains WHERE root_domain=?", (domain,)).fetchone()[0]
+        days = []
+        for error in outcomes:
+            store.schedule_due(conn, NOW + timedelta(days=400))
+            job = conn.execute("SELECT j.id AS job_id, d.* FROM crawl_jobs j JOIN domains d ON d.id=j.domain_id"
+                               " WHERE j.status='queued' AND d.id=? LIMIT 1", (domain_id,)).fetchone()
+            conn.execute("UPDATE crawl_jobs SET status='running' WHERE id=?", (job["job_id"],))
+            store.finish_job(conn, job["job_id"], job["id"], category="mkb", language=None,
+                             scores=None if error else {"psa_score": 80}, pages_crawled=0 if error else 1,
+                             error=error, now=NOW)
+            row = conn.execute("SELECT next_crawl_at, fail_count, index_status FROM domains WHERE root_domain=?",
+                               (domain,)).fetchone()
+            days.append((datetime.fromisoformat(row["next_crawl_at"]) - NOW).days)
+        return days, row
+
+    def test_backoff_grows_and_resets(self):
         with store.connect(self.path) as conn:
-            store.add_domains(conn, [{"domain": "b.nl"}], "list")
-            job = store.claim_job(conn)
-            store.finish_job(conn, job["job_id"], job["id"], category="onbekend", language=None, scores=None,
-                             pages_crawled=0, error="blocked: HTTP 403", now=NOW)
-            row = conn.execute("SELECT index_status, next_crawl_at FROM domains").fetchone()
-            self.assertEqual(row["index_status"], "blocked")
-            self.assertEqual(row["next_crawl_at"][:10], "2027-02-16")
+            days, row = self._fail_then(conn, "b.nl", ["blocked: HTTP 403"] * 4)
+            self.assertEqual(days, [7, 30, 90, 90])
+            self.assertEqual((row["index_status"], row["fail_count"]), ("blocked", 4))
+            days, _ = self._fail_then(conn, "r.nl", ["blocked: HTTP 429"] * 5)
+            self.assertEqual(days, [1, 3, 7, 30, 30])
+            days, _ = self._fail_then(conn, "d.nl", ["failed: dns"] * 4 + [None, "failed: timeout"])
+            self.assertEqual(days, [1, 7, 30, 90, 30, 1])            # success resets the count
+            days, row = self._fail_then(conn, "a.nl", ["redirect: other domain"])
+            self.assertEqual((days, row["index_status"]), ([90], "redirect"))
+
+    def test_migration_keeps_old_data(self):
+        old = os.path.join(self.tmp.name, "old.db")
+        conn = sqlite3.connect(old)
+        conn.executescript("""
+            CREATE TABLE domains (id INTEGER PRIMARY KEY, root_domain TEXT NOT NULL UNIQUE, hostname TEXT NOT NULL,
+              category TEXT NOT NULL DEFAULT 'onbekend', country TEXT NOT NULL, language TEXT, source TEXT NOT NULL,
+              first_seen_at TEXT NOT NULL, last_crawled_at TEXT, next_crawl_at TEXT NOT NULL,
+              crawl_priority INTEGER NOT NULL DEFAULT 0, index_status TEXT NOT NULL DEFAULT 'new');
+            CREATE TABLE pages (id INTEGER PRIMARY KEY, domain_id INTEGER NOT NULL, url TEXT NOT NULL,
+              http_status INTEGER, title TEXT, meta_description TEXT, h1 TEXT, word_count INTEGER, language TEXT,
+              canonical_url TEXT, robots_directive TEXT, schema_types TEXT, seo_score INTEGER, geo_score INTEGER,
+              fetched_at TEXT NOT NULL, UNIQUE(domain_id, url));
+            CREATE TABLE crawl_jobs (id INTEGER PRIMARY KEY, domain_id INTEGER NOT NULL,
+              status TEXT NOT NULL DEFAULT 'queued', priority INTEGER NOT NULL DEFAULT 0,
+              attempts INTEGER NOT NULL DEFAULT 0, scheduled_at TEXT NOT NULL, started_at TEXT, finished_at TEXT,
+              error TEXT);
+            INSERT INTO domains (root_domain, hostname, country, source, first_seen_at, next_crawl_at)
+              VALUES ('oud.nl', 'oud.nl', 'NL', 'list', '2026-11-17', '2026-11-17');
+            INSERT INTO pages (domain_id, url, fetched_at) VALUES (1, 'https://oud.nl/a', '2026-11-17');
+        """)
+        conn.commit()
+        conn.close()
+        store.init(old)
+        store.init(old)                                                 # running twice is harmless
+        with store.connect(old) as conn:
+            row = conn.execute("SELECT root_domain, fail_count, homepage_hash FROM domains").fetchone()
+            self.assertEqual(tuple(row), ("oud.nl", 0, None))
+            self.assertEqual(conn.execute("SELECT url, content_hash FROM pages").fetchone()[0], "https://oud.nl/a")
+            cols = {r["name"] for r in conn.execute("PRAGMA table_info(crawl_jobs)")}
+            self.assertTrue({"pages_crawled", "pages_unchanged"} <= cols)
+
+    def test_queue_and_index_stats(self):
+        with store.connect(self.path) as conn:
+            self._seed(conn, 3, "mkb", "nl")
+            self._fail_then(conn, "x.nl", ["blocked: HTTP 403"])
+            queue = store.queue_overview(conn, NOW)
+            self.assertEqual(queue["jobs_by_status"].get("done"), 3)
+            self.assertEqual(queue["domains_in_backoff"], {"≤7 dagen": 1})
+            stats = store.index_stats(conn)
+            self.assertEqual(stats["by_status"]["ok"], 3)
+            self.assertIn("NL:mkb", stats["cohorts_below_minimum"])
 
     def _seed(self, conn, n, category="mkb", tld="nl"):
         for i in range(n):
@@ -187,7 +269,7 @@ class StoreTests(unittest.TestCase):
                                " ORDER BY percentile DESC LIMIT 1").fetchone()
             self.assertEqual((top["rank_in_cohort"], top["comparison_group_size"]), (1, 40))
             rows = [dict(r) for r in store.latest_scores(conn)]
-        with patch("backend.benchmark.routes.MIN_COHORT_SIZE", 30):
+        with patch("backend.benchmark.rules.MIN_COHORT_SIZE", 30):
             known = compare_scores(rows, "mkb3.nl", {"psa": 90}, None)
             self.assertEqual(known["metrics"]["psa"]["cohort"], "NL:mkb")
             self.assertEqual(known["metrics"]["psa"]["group_size"], 40)
@@ -257,6 +339,61 @@ class CrawlerTests(unittest.TestCase):
             return None
         with patch.object(worker, "fetch", none):
             self.assertTrue(asyncio.run(worker.crawl_domain({"root_domain": "x.nl", "hostname": "x.nl", "category": "onbekend"}))["error"].startswith("failed"))
+
+    def test_recrawl_skips_unchanged_pages(self):
+        body = lambda title: f"<html lang='nl'><title>{title}</title><h1>{title}</h1>" + "woord " * 400  # noqa: E731
+        home = body("Home") + "".join(f'<a href="/diensten/{i}">d</a>' for i in range(4))
+        pages = {"https://x.nl/": (200, home, "text/html")}
+        for i in range(4):
+            pages[f"https://x.nl/diensten/{i}"] = (200, body(f"Dienst {i}"), "text/html")
+        row = {"root_domain": "x.nl", "hostname": "x.nl", "category": "mkb"}
+        with patch.object(worker, "fetch", fake_site(pages)), patch.object(worker, "PAGE_DELAY_SECONDS", 0):
+            first = asyncio.run(worker.crawl_domain(row))
+            self.assertEqual((len(first["pages"]), first["unchanged"]), (5, []))
+            known = {p["url"]: {"content_hash": p["content_hash"], "http_status": 200, "word_count": p["word_count"]}
+                     for p in first["pages"]}
+            pages["https://x.nl/diensten/2"] = (200, body("Dienst 2 vernieuwd"), "text/html")
+            second = asyncio.run(worker.crawl_domain({**row, "homepage_hash": first["homepage_hash"]}, known))
+        self.assertEqual([p["url"] for p in second["pages"]], ["https://x.nl/", "https://x.nl/diensten/2"])
+        self.assertEqual(len(second["unchanged"]), 3)
+        self.assertEqual(second["homepage_hash"], first["homepage_hash"])
+
+    def test_content_hash_ignores_cms_noise(self):
+        page = lambda nonce, text="Welkom", desc="Over ons": (  # noqa: E731
+            f'<html><head><meta name="description" content="{desc}"><script>var n="{nonce}"</script>'
+            f'<style>.a{{}}</style></head><body><!-- {nonce} --><p class="x{nonce}">{text}</p></body></html>')
+        self.assertEqual(worker.content_hash(page("abc")), worker.content_hash(page("xyz")))
+        self.assertNotEqual(worker.content_hash(page("abc")), worker.content_hash(page("abc", text="Welkom terug")))
+        self.assertNotEqual(worker.content_hash(page("abc")), worker.content_hash(page("abc", desc="Nieuw")))
+
+    def test_frontier_prefers_much_linked_pages(self):
+        home = '<a href="/a">a</a><a href="/b">b</a><a href="/c">c</a>'
+        frontier = worker.build_frontier("https://x.nl/", home, [], "x.nl", None, {}, False)
+        frontier.link_from("https://x.nl/a", {"https://x.nl/c"})
+        frontier.link_from("https://x.nl/b", {"https://x.nl/c", "https://x.nl/nieuw"})
+        self.assertEqual(frontier.pop(), "https://x.nl/c")             # 3 inlinks
+        self.assertIn(frontier.pop(), {"https://x.nl/a", "https://x.nl/b"})
+        order = [frontier.pop(), frontier.pop()]
+        self.assertIn("https://x.nl/nieuw", order)                      # discovered on a subpage
+        self.assertIsNone(frontier.pop())
+
+    def test_frontier_changed_sitemap_url_and_old_404(self):
+        now = datetime.now(timezone.utc)
+        last_crawl = now - timedelta(days=10)
+        sitemap = [rules.SitemapEntry("https://x.nl/oud", None, now - timedelta(days=40)),
+                   rules.SitemapEntry("https://x.nl/ongezien", None, None),
+                   rules.SitemapEntry("https://x.nl/bijgewerkt", None, now - timedelta(days=1)),
+                   rules.SitemapEntry("https://x.nl/weg", None, None)]
+        known = {"https://x.nl/oud": {"http_status": 200, "word_count": 100},
+                 "https://x.nl/bijgewerkt": {"http_status": 200, "word_count": 100},
+                 "https://x.nl/weg": {"http_status": 404, "word_count": 0}}
+        frontier = worker.build_frontier("https://x.nl/", "", sitemap, "x.nl", None, known, False, last_crawl)
+        self.assertTrue(frontier.signals["https://x.nl/bijgewerkt"]["is_new"])      # updated since last crawl
+        self.assertFalse(frontier.signals["https://x.nl/ongezien"]["is_new"])       # no lastmod: no claim
+        self.assertEqual([frontier.pop() for _ in range(4)],
+                         ["https://x.nl/bijgewerkt", "https://x.nl/oud", "https://x.nl/ongezien", "https://x.nl/weg"])
+        first_crawl = worker.build_frontier("https://x.nl/", "", sitemap, "x.nl", None, {}, False, None)
+        self.assertFalse(any(s["is_new"] for s in first_crawl.signals.values()))    # first crawl: nothing is "new"
 
     def test_unreachable_reason_comes_from_https_attempt(self):
         async def failing(url, domain, *, max_bytes=0, reasons=None):

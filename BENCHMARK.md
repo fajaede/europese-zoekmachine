@@ -36,6 +36,42 @@ Cohorten zijn land × categorie: `NL:mkb`, `*:mkb`, `NL:*` en `*:*`. Een percent
 | `redirect` | De site stuurt door naar een ander domein. Dat volgt de crawler bewust niet. |
 | `failed` | Het domein kon niet gemeten worden. De reden staat in `crawl_jobs.error`: `dns`, `timeout`, `tls certificate`, `connection refused`, enzovoort. |
 
+## Slim hercrawlen
+
+**Ongewijzigde pagina's.** Van elke pagina wordt een vingerafdruk bewaard (`content_hash`). Die gaat over de zichtbare tekst, de titel, de description-, robots- en canonical-tags en de JSON-LD. Scripts, stijlen en commentaar tellen niet mee, dus wisselende CMS-codes geven geen valse wijziging. Is een pagina bij de volgende crawl gelijk, dan wordt alleen `fetched_at` bijgewerkt; de analyse wordt overgeslagen. De homepage wordt altijd opnieuw gemeten.
+
+**Volgorde van de pagina's.** Bovenop de vaste regels (homepage, sitemap-prioriteit, contenttype, diepte, parameters):
+
+| Signaal | Effect |
+|---|---|
+| In de sitemap toegevoegd of bijgewerkt (`lastmod`) sinds de vorige crawl | +15 |
+| Gaf vorige keer 404/410 | −60 |
+| Was vorige keer een doorverwijzing (301/302/307/308) | −20 |
+| Was vorige keer een goede pagina (200, minstens 300 woorden) | +5 |
+| Interne links vanaf al gecrawlde pagina's | +3 per pagina, maximaal +15 |
+| De homepage is veranderd: belangrijke pagina's (diensten, producten, contact, prijzen) | +10 |
+
+**Pauze na fouten.** De pauze loopt op met elke mislukte poging achter elkaar. Na een geslaagde crawl begint de telling opnieuw.
+
+| Fout | Pauze per poging |
+|---|---|
+| HTTP 429 of 503 (te druk) | 1, 3, 7, 30 dagen |
+| Andere blokkades (403, 401, robots.txt) | 7, 30, 90 dagen |
+| Mislukt (dns, timeout, tls, ...) | 1, 7, 30, 90 dagen |
+| Doorverwijzing naar een ander domein | 90 dagen |
+
+## Beheer-endpoints
+
+```bash
+curl -H "X-Admin-Key: $ADMIN_API_KEY" https://api.fajaede.eu/api/benchmark/queue
+curl -H "X-Admin-Key: $ADMIN_API_KEY" https://api.fajaede.eu/api/benchmark/index-stats
+```
+
+- **`/queue`:** jobs per status, de volgende 20 jobs, foutredenen van de laatste 24 uur, het aantal domeinen dat in het laatste uur is afgerond, en het aantal domeinen in pauze.
+- **`/index-stats`:** domeinen per status en categorie, de versheid (gemeten in de laatste 7, 30 en 90 dagen), het aantal pagina's, het aandeel ongewijzigde pagina's, de cohortgroottes en de cohorten onder het minimum.
+
+Bestaande databases krijgen de nieuwe kolommen automatisch bij de volgende start van de backend. Er gaat geen data verloren.
+
 ## Aanzetten op de server
 
 Zet in `.env`:

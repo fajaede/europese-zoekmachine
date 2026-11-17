@@ -4,6 +4,8 @@ Admin (X-Admin-Key):
   POST /api/benchmark/domains      {"source": "index"|"tranco"|"list", "limit": 5000, "domains": [...]}
   GET  /api/benchmark/status
   POST /api/benchmark/recalculate
+  GET  /api/benchmark/queue
+  GET  /api/benchmark/index-stats
 psa.fajaede.nl (X-Benchmark-Key = BENCHMARK_API_KEY):
   GET  /api/benchmark/compare?domain=voorbeeld.nl&psa=82&seo=67&geo=40&ai=50
 """
@@ -22,8 +24,6 @@ from backend.benchmark import rules, store, worker
 
 router = APIRouter(prefix="/api/benchmark", tags=["benchmark"])
 
-# Smallest group we report a percentile for; smaller cohorts fall back to a broader one.
-MIN_COHORT_SIZE = int(os.getenv("BENCHMARK_MIN_COHORT", "30"))
 METRIC_PARAMS = {"psa": "psa_score", "seo": "seo_score", "geo": "geo_score", "ai": "ai_visibility_score",
                  "security": "security_score", "overall": "overall_score"}
 
@@ -93,8 +93,28 @@ async def recalculate(request: Request) -> dict[str, Any]:
     return {"benchmarks_written": await asyncio.to_thread(_run)}
 
 
+def _read(fn: Any) -> Any:
+    store.init()
+    with store.connect() as conn:
+        return fn(conn)
+
+
+@router.get("/queue")
+async def queue(request: Request) -> dict[str, Any]:
+    """Jobs per status, next jobs, failure reasons (24h), throughput and domains in backoff."""
+    _check_key(request, "ADMIN_API_KEY", "X-Admin-Key")
+    return await asyncio.to_thread(_read, store.queue_overview)
+
+
+@router.get("/index-stats")
+async def index_stats(request: Request) -> dict[str, Any]:
+    """Coverage and freshness of the benchmark index, unchanged-page share, cohort sizes."""
+    _check_key(request, "ADMIN_API_KEY", "X-Admin-Key")
+    return await asyncio.to_thread(_read, store.index_stats)
+
+
 def compare_scores(rows: list[Any], domain: str, scores: dict[str, int], category: str | None) -> dict[str, Any]:
-    """Percentile per metric in the most specific cohort that has at least MIN_COHORT_SIZE sites
+    """Percentile per metric in the most specific cohort that has at least rules.MIN_COHORT_SIZE sites
     and real spread (rules.has_spread). A metric without such a cohort is left out."""
     known = next((row for row in rows if row["root_domain"] == domain), None)
     country = known["country"] if known else rules.country_of(domain)
@@ -108,7 +128,7 @@ def compare_scores(rows: list[Any], domain: str, scores: dict[str, int], categor
             continue
         for cohort in candidates:
             values = groups.get((cohort, metric), [])
-            if len(values) >= MIN_COHORT_SIZE and rules.has_spread(values):
+            if len(values) >= rules.MIN_COHORT_SIZE and rules.has_spread(values):
                 pct = rules.percentile(scores[param], values)
                 results[param] = {
                     "score": scores[param], "percentile": pct, "top_percent": max(1, 100 - pct),

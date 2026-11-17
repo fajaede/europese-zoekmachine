@@ -3,6 +3,7 @@ URL priority, sitemap parsing and cohort names. No I/O, so everything is unit-te
 
 from __future__ import annotations
 
+import os
 import re
 import xml.etree.ElementTree as ET
 from bisect import bisect_left, bisect_right
@@ -28,7 +29,23 @@ CATEGORIES: dict[str, Category] = {
     "klein": Category("Kleine statische site", 5, 90),
     "onbekend": Category("Nog niet ingedeeld", 5, 30),
 }
-FAILED_RECRAWL_DAYS = 90  # blocked or broken sites: only retry rarely
+# Smallest cohort we report a percentile for (smaller cohorts fall back to a broader one).
+MIN_COHORT_SIZE = int(os.getenv("BENCHMARK_MIN_COHORT", "30"))
+
+# Growing pause after consecutive failures: index = number of earlier failures (last value repeats).
+BACKOFF_DAYS: list[tuple[tuple[str, ...], list[int]]] = [
+    (("blocked: HTTP 429", "blocked: HTTP 503"), [1, 3, 7, 30]),   # rate limited / overloaded: retry soon
+    (("blocked",), [7, 30, 90]),                                   # 403, 401, robots.txt
+    (("redirect",), [90]),                                         # alias of another domain
+    (("failed",), [1, 7, 30, 90]),                                 # dns, timeout, tls, ...
+]
+
+
+def backoff_days(error: str, previous_failures: int) -> int:
+    for prefixes, steps in BACKOFF_DAYS:
+        if error.startswith(prefixes):
+            return steps[min(previous_failures, len(steps) - 1)]
+    return 30
 
 
 def page_limit(category: str) -> int:
@@ -115,14 +132,34 @@ def is_crawlable_url(url: str) -> bool:
     return parts.scheme in {"http", "https"} and not _SKIP_EXT.search(parts.path) and not _BAD_PATH.search(parts.path)
 
 
+MAX_INLINK_BONUS = 15
+_KEY_PAGES = re.compile(r"/(dienst|diensten|services?|product|producten|products|contact|prijzen|pricing)(/|$)", re.I)
+
+
 def url_priority(url: str, *, sitemap_priority: float | None = None, lastmod: datetime | None = None,
-                 depth: int = 1, now: datetime | None = None) -> float:
-    """Higher = crawl sooner. Homepage first; then valuable, recent, shallow, clean URLs."""
+                 depth: int = 1, now: datetime | None = None, is_new: bool = False,
+                 previous_status: int | None = None, previous_words: int | None = None,
+                 inlinks: int = 0, homepage_changed: bool = False) -> float:
+    """Higher = crawl sooner. Homepage first; then valuable, recent, shallow, clean URLs.
+    Recrawl signals: new in the sitemap (+15), earlier 404/410 (-60) or redirect (-20),
+    earlier good page (+5), internal links from crawled pages (+3 each, max +15), and key
+    pages when the homepage changed (+10)."""
     parts = urlsplit(url)
     path = parts.path or "/"
     if path in {"", "/"} and not parts.query:
         return 1000.0
     score = 0.0
+    if is_new:
+        score += 15
+    if previous_status in {404, 410}:
+        score -= 60
+    elif previous_status in {301, 302, 307, 308}:
+        score -= 20
+    elif previous_status == 200 and (previous_words or 0) >= 300:
+        score += 5
+    score += min(MAX_INLINK_BONUS, 3 * max(0, inlinks))
+    if homepage_changed and _KEY_PAGES.search(path):
+        score += 10
     if sitemap_priority is not None:
         score += 20 * max(0.0, min(1.0, sitemap_priority))
     score += max(0, 15 - 5 * depth)
