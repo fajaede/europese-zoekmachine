@@ -94,7 +94,8 @@ async def recalculate(request: Request) -> dict[str, Any]:
 
 
 def compare_scores(rows: list[Any], domain: str, scores: dict[str, int], category: str | None) -> dict[str, Any]:
-    """Percentile per metric in the most specific cohort that has at least MIN_COHORT_SIZE sites."""
+    """Percentile per metric in the most specific cohort that has at least MIN_COHORT_SIZE sites
+    and real spread (rules.has_spread). A metric without such a cohort is left out."""
     known = next((row for row in rows if row["root_domain"] == domain), None)
     country = known["country"] if known else rules.country_of(domain)
     cat = known["category"] if known else (category if category in rules.CATEGORIES else None)
@@ -107,7 +108,7 @@ def compare_scores(rows: list[Any], domain: str, scores: dict[str, int], categor
             continue
         for cohort in candidates:
             values = groups.get((cohort, metric), [])
-            if len(values) >= MIN_COHORT_SIZE:
+            if len(values) >= MIN_COHORT_SIZE and rules.has_spread(values):
                 pct = rules.percentile(scores[param], values)
                 results[param] = {
                     "score": scores[param], "percentile": pct, "top_percent": max(1, 100 - pct),

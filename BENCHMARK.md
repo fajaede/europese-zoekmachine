@@ -25,6 +25,17 @@ De categorie wordt na de eerste crawl automatisch bepaald (`backend/benchmark/ru
 
 Cohorten zijn land × categorie: `NL:mkb`, `*:mkb`, `NL:*` en `*:*`. Een percentiel wordt alleen getoond bij minstens 30 sites (`BENCHMARK_MIN_COHORT`). Anders valt de vergelijking terug op een bredere groep.
 
+**Spreiding is vereist.** Heeft meer dan 70% van een groep dezelfde score, dan wordt voor die meting geen percentiel getoond. Een voorbeeld is GEO 0 bij sites zonder lokale bedrijfsgegevens.
+
+**Status per domein** (`index_status`):
+
+| Status | Betekenis |
+|---|---|
+| `ok` | Gemeten. |
+| `blocked` | De site weigert bots: HTTP 401, 403, 429 of 503, of een blokkade in robots.txt. |
+| `redirect` | De site stuurt door naar een ander domein. Dat volgt de crawler bewust niet. |
+| `failed` | Het domein kon niet gemeten worden. De reden staat in `crawl_jobs.error`: `dns`, `timeout`, `tls certificate`, `connection refused`, enzovoort. |
+
 ## Aanzetten op de server
 
 Zet in `.env`:

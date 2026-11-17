@@ -83,6 +83,12 @@ class RulesTests(unittest.TestCase):
         self.assertEqual(rules.rank(5, group), 11)
         self.assertIsNone(rules.percentile(50, [1, 2, 3]))      # group too small
 
+    def test_spread(self):
+        self.assertFalse(rules.has_spread([0] * 8 + [10, 20]))        # 80% the same: GEO-like
+        self.assertTrue(rules.has_spread([0] * 7 + [10, 20, 30]))     # 70%: still allowed
+        self.assertTrue(rules.has_spread(list(range(10))))
+        self.assertFalse(rules.has_spread([]))
+
     def test_cohort_labels(self):
         self.assertEqual(rules.cohorts("NL", "mkb"), ["NL:mkb", "*:mkb", "NL:*", "*:*"])
         self.assertEqual(cohort_label("NL:mkb"), "Nederlandse kleine bedrijven / mkb")
@@ -189,11 +195,23 @@ class StoreTests(unittest.TestCase):
             unknown = compare_scores(rows, "nieuw.be", {"psa": 90}, "saas")
             self.assertEqual(unknown["metrics"]["psa"]["cohort"], "*:*")
             self.assertEqual(unknown["metrics"]["psa"]["top_percent"], 100 - unknown["metrics"]["psa"]["percentile"])
+            # Every site has SEO 50: no spread, so no SEO percentile (stored or compared).
+            self.assertNotIn("seo", compare_scores(rows, "mkb3.nl", {"psa": 90, "seo": 70}, None)["metrics"])
+        with store.connect(self.path) as conn:
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM benchmarks WHERE metric='seo_score'").fetchone()[0], 0)
+
+    def test_redirect_gets_its_own_status(self):
+        with store.connect(self.path) as conn:
+            store.add_domains(conn, [{"domain": "c.nl"}], "list")
+            job = store.claim_job(conn)
+            store.finish_job(conn, job["job_id"], job["id"], category="onbekend", language=None, scores=None,
+                             pages_crawled=0, error="redirect: other domain", now=NOW)
+            self.assertEqual(conn.execute("SELECT index_status FROM domains").fetchone()[0], "redirect")
 
 
 def fake_site(pages: dict[str, tuple[int, str, str]]):
     """Replaces worker.fetch: url -> (status, body, content-type)."""
-    async def fetch(url, domain, *, max_bytes=0):
+    async def fetch(url, domain, *, max_bytes=0, reasons=None):
         if url not in pages:
             return (404, "", url, httpx.Headers({"content-type": "text/html"}))
         status, body, ctype = pages[url]
@@ -235,10 +253,33 @@ class CrawlerTests(unittest.TestCase):
         with patch.object(worker, "fetch", fake_site({"https://x.nl/": (403, "", "text/html")})):
             self.assertEqual(asyncio.run(worker.crawl_domain({"root_domain": "x.nl", "hostname": "x.nl", "category": "onbekend"}))["error"], "blocked: HTTP 403")
 
-        async def none(url, domain, *, max_bytes=0):
+        async def none(url, domain, *, max_bytes=0, reasons=None):
             return None
         with patch.object(worker, "fetch", none):
             self.assertTrue(asyncio.run(worker.crawl_domain({"root_domain": "x.nl", "hostname": "x.nl", "category": "onbekend"}))["error"].startswith("failed"))
+
+    def test_unreachable_reason_comes_from_https_attempt(self):
+        async def failing(url, domain, *, max_bytes=0, reasons=None):
+            reasons.append("redirect: other domain" if url.startswith("https") else "failed: timeout")
+            return None
+        with patch.object(worker, "fetch", failing):
+            result = asyncio.run(worker.crawl_domain({"root_domain": "x.nl", "hostname": "x.nl", "category": "onbekend"}))
+        self.assertEqual(result["error"], "redirect: other domain")
+
+    def test_failure_reasons(self):
+        request = httpx.Request("GET", "https://x.nl/")
+        cases = [
+            (ValueError("The redirect left the allowed crawl domain."), "redirect: other domain"),
+            (ValueError("The website hostname could not be resolved."), "failed: dns"),
+            (ValueError("Private and local addresses cannot be audited."), "failed: private address"),
+            (ValueError("The website exceeded the redirect limit."), "failed: redirect loop"),
+            (httpx.ReadTimeout("timed out", request=request), "failed: timeout"),
+            (httpx.ConnectError("[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed", request=request),
+             "failed: tls certificate"),
+            (httpx.ConnectError("All connection attempts failed", request=request), "failed: connection refused"),
+        ]
+        for exc, expected in cases:
+            self.assertEqual(worker.failure_reason(exc), expected, str(exc))
 
     def test_robots_blocks_homepage(self):
         pages = {"https://x.nl/": (200, "<html></html>", "text/html"),

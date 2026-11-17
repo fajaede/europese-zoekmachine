@@ -42,14 +42,40 @@ def decode(body: bytes, headers: httpx.Headers) -> str:
         return body.decode("utf-8", errors="replace")
 
 
-async def fetch(url: str, domain: str, *, max_bytes: int = 2_000_000) -> FetchResult | None:
-    """Safe fetch (public addresses only, redirects must stay on the domain). None on any failure."""
+def failure_reason(exc: BaseException) -> str:
+    """Short, groupable reason for the crawl report ('failed: dns', 'redirect: other domain', ...)."""
+    text = str(exc).lower()
+    if "left the allowed crawl domain" in text:
+        return "redirect: other domain"
+    if "could not be resolved" in text:
+        return "failed: dns"
+    if "private and local" in text:
+        return "failed: private address"
+    if "redirect limit" in text or "redirect without" in text:
+        return "failed: redirect loop"
+    if "size limit" in text:
+        return "failed: page too large"
+    if isinstance(exc, httpx.TimeoutException):
+        return "failed: timeout"
+    if "certificate" in text or "ssl" in text or "tls" in text:
+        return "failed: tls certificate"
+    if isinstance(exc, (httpx.ConnectError, OSError)):
+        return "failed: connection refused"
+    return f"failed: {type(exc).__name__}"
+
+
+async def fetch(url: str, domain: str, *, max_bytes: int = 2_000_000,
+                reasons: list[str] | None = None) -> FetchResult | None:
+    """Safe fetch (public addresses only, redirects must stay on the domain). None on any
+    failure; the reason is appended to `reasons` when given."""
     try:
         body, final_url, status, headers = await fetch_public_resource(
             url, timeout_seconds=10, max_bytes=max_bytes, allowed_domain=domain,
             headers={"Accept": "text/html,application/xhtml+xml,application/xml,text/plain;q=0.9,*/*;q=0.5"},
         )
-    except (ValueError, httpx.HTTPError, OSError):
+    except (ValueError, httpx.HTTPError, OSError) as exc:
+        if reasons is not None:
+            reasons.append(failure_reason(exc))
         return None
     return status, decode(body, headers), final_url, headers
 
@@ -135,12 +161,14 @@ async def crawl_domain(domain_row: dict[str, Any]) -> dict[str, Any]:
     result: dict[str, Any] = {"category": domain_row["category"], "language": None, "scores": None, "pages": [], "error": None}
 
     home = None
+    reasons: list[str] = []
     for start in (f"https://{host}/", f"http://{host}/"):
-        home = await fetch(start, domain)
+        home = await fetch(start, domain, reasons=reasons)
         if home:
             break
     if not home:
-        result["error"] = "failed: homepage not reachable"
+        # The HTTPS attempt says most (http:// often just redirects back to https).
+        result["error"] = reasons[0] if reasons else "failed: homepage not reachable"
         return result
     status, html, final_url, headers = home
     if status in {401, 403, 429, 503}:

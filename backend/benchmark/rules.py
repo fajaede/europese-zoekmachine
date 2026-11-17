@@ -211,6 +211,21 @@ def percentile(score: float, sorted_group: list[float]) -> int | None:
     return round((lower + ties / 2) * 100 / len(sorted_group))
 
 
+MAX_TIE_SHARE = 0.7
+
+
+def has_spread(sorted_group: list[float]) -> bool:
+    """A percentile only means something when scores differ: if more than 70% of the group
+    has the very same score (e.g. GEO 0 for sites without local-business data), skip it."""
+    if not sorted_group:
+        return False
+    largest_tie = run = 1
+    for previous, current in zip(sorted_group, sorted_group[1:]):
+        run = run + 1 if current == previous else 1
+        largest_tie = max(largest_tie, run)
+    return largest_tie / len(sorted_group) <= MAX_TIE_SHARE
+
+
 def rank(score: float, sorted_group: list[float]) -> int:
     """1 = best in the group."""
     return 1 + len(sorted_group) - bisect_right(sorted_group, score)

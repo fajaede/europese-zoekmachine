@@ -26,7 +26,7 @@ CREATE TABLE IF NOT EXISTS domains (
     last_crawled_at TEXT,
     next_crawl_at TEXT NOT NULL,
     crawl_priority INTEGER NOT NULL DEFAULT 0,
-    index_status TEXT NOT NULL DEFAULT 'new'      -- new | ok | blocked | failed
+    index_status TEXT NOT NULL DEFAULT 'new'      -- new | ok | blocked | redirect | failed
 );
 CREATE INDEX IF NOT EXISTS domains_due ON domains(next_crawl_at, crawl_priority);
 
@@ -193,7 +193,8 @@ def finish_job(conn: sqlite3.Connection, job_id: int, domain_id: int, *, categor
              pages_crawled, stamp),
         )
     days = rules.recrawl_days(category) if error is None else rules.FAILED_RECRAWL_DAYS
-    status = "ok" if error is None else ("blocked" if error.startswith("blocked") else "failed")
+    status = "ok" if error is None else next(
+        (prefix for prefix in ("blocked", "redirect") if error.startswith(prefix)), "failed")
     conn.execute(
         "UPDATE domains SET category=?, language=COALESCE(?, language), last_crawled_at=?, next_crawl_at=?,"
         " index_status=? WHERE id=?",
@@ -233,13 +234,14 @@ def recalculate_benchmarks(conn: sqlite3.Connection, now: datetime | None = None
     """Store percentile and rank per domain, cohort and metric (fresh scores only)."""
     rows = latest_scores(conn, now)
     groups = cohort_groups(rows)
+    spread = {key: rules.has_spread(values) for key, values in groups.items()}
     stamp = now_iso(now)
     records = []
     for row in rows:
         for cohort in rules.cohorts(row["country"], row["category"]):
             for metric in METRICS:
                 values = groups.get((cohort, metric))
-                if row[metric] is None or not values:
+                if row[metric] is None or not values or not spread[(cohort, metric)]:
                     continue
                 pct = rules.percentile(row[metric], values)
                 if pct is not None:
