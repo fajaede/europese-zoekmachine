@@ -66,14 +66,14 @@ def failure_reason(exc: BaseException) -> str:
 
 
 async def fetch(url: str, domain: str, *, max_bytes: int = 2_000_000,
-                reasons: list[str] | None = None) -> FetchResult | None:
+                reasons: list[str] | None = None, user_agent: str = CRAWLER_USER_AGENT) -> FetchResult | None:
     """Safe fetch (public addresses only, redirects must stay on the domain). None on any
     failure; the reason is appended to `reasons` when given."""
     try:
         body, final_url, status, headers = await fetch_public_resource(
             url, timeout_seconds=10, max_bytes=max_bytes, allowed_domain=domain,
             headers={"Accept": "text/html,application/xhtml+xml,application/xml,text/plain;q=0.9,*/*;q=0.5",
-                     "User-Agent": CRAWLER_USER_AGENT},
+                     "User-Agent": user_agent},
         )
     except (ValueError, httpx.HTTPError, OSError) as exc:
         if reasons is not None:
@@ -107,7 +107,8 @@ def page_fields(url: str, status: int, html: str, audit: dict[str, Any], digest:
     }
 
 
-async def read_sitemaps(origin: str, domain: str, robots_text: str) -> tuple[list[rules.SitemapEntry], int | None, bool | None]:
+async def read_sitemaps(origin: str, domain: str, robots_text: str, user_agent: str = CRAWLER_USER_AGENT,
+                        ) -> tuple[list[rules.SitemapEntry], int | None, bool | None]:
     """Entries from robots.txt sitemaps or /sitemap.xml (one index level deep), plus the
     status/validity of the first sitemap for the SEO audit."""
     queue = rules.sitemaps_from_robots(robots_text) or [f"{origin}/sitemap.xml"]
@@ -121,7 +122,7 @@ async def read_sitemaps(origin: str, domain: str, robots_text: str) -> tuple[lis
             if sitemap_url in seen or len(entries) >= MAX_SITEMAP_ENTRIES:
                 continue
             seen.add(sitemap_url)
-            result = await fetch(sitemap_url, domain, max_bytes=5_000_000)
+            result = await fetch(sitemap_url, domain, max_bytes=5_000_000, user_agent=user_agent)
             if first_status is None:
                 first_status = result[0] if result else None
             if not result or result[0] >= 400:
@@ -154,13 +155,14 @@ class Frontier:
 
     def __init__(self, home_url: str, host: str, robots: rules.RobotsTxt | None,
                  known: dict[str, dict[str, Any]], homepage_changed: bool,
-                 last_crawled: datetime | None = None):
+                 last_crawled: datetime | None = None, robots_token: str = CRAWLER_TOKEN):
         self.home_key = home_url.rstrip("/")
         self.host = host
         self.robots = robots
         self.known = known
         self.homepage_changed = homepage_changed
         self.last_crawled = last_crawled
+        self.robots_token = robots_token
         self.signals: dict[str, dict[str, Any]] = {}
         self.inlinks: dict[str, int] = {}
         self.heap: list[tuple[float, str]] = []
@@ -168,7 +170,7 @@ class Frontier:
 
     def _allowed(self, url: str) -> bool:
         return (url.rstrip("/") != self.home_key and rules.is_crawlable_url(url)
-                and (self.robots is None or self.robots.can_fetch(CRAWLER_TOKEN, url)))
+                and (self.robots is None or self.robots.can_fetch(self.robots_token, url)))
 
     def score(self, url: str) -> float:
         return rules.url_priority(url, inlinks=self.inlinks.get(url, 0), **self.signals[url])
@@ -214,8 +216,9 @@ class Frontier:
 
 def build_frontier(home_url: str, home_html: str, sitemap: list[rules.SitemapEntry], host: str,
                    robots: rules.RobotsTxt | None, known: dict[str, dict[str, Any]],
-                   homepage_changed: bool, last_crawled: datetime | None = None) -> Frontier:
-    frontier = Frontier(home_url, host, robots, known, homepage_changed, last_crawled)
+                   homepage_changed: bool, last_crawled: datetime | None = None,
+                   robots_token: str = CRAWLER_TOKEN) -> Frontier:
+    frontier = Frontier(home_url, host, robots, known, homepage_changed, last_crawled, robots_token)
     bare = host.lower().removeprefix("www.")
     for entry in sitemap:
         if (urlsplit(entry.loc).hostname or "").lower().removeprefix("www.") == bare:

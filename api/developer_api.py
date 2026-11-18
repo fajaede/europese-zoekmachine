@@ -655,6 +655,57 @@ async def generate_seo(request: SEOGenerateRequest, x_api_key: str = Header(...,
             score=50,
         )
 
+
+# --- Site audit (Pro and Premium) -------------------------------------------------------------
+# Crawls up to N pages of a site and reports site-wide issues; runs in the background.
+SITE_AUDIT_PLANS = {
+    "pro": {"max_pages": 25, "audits_per_day": _env_int("DEVELOPER_PRO_AUDITS_PER_DAY", 5)},
+    "premium": {"max_pages": 100, "audits_per_day": _env_int("DEVELOPER_PREMIUM_AUDITS_PER_DAY", 20)},
+}
+
+
+class SiteAuditRequest(BaseModel):
+    url: str = Field(min_length=8, max_length=2048)
+    max_pages: Optional[int] = Field(default=None, ge=1, le=100)
+
+
+@router.post("/site-audit", status_code=202)
+async def start_site_audit(request: SiteAuditRequest, x_api_key: str = Header(..., alias="X-API-Key")):
+    # Imported here: the backend package is only needed for this endpoint.
+    from backend.benchmark import site_audit  # pylint: disable=import-outside-toplevel
+    from backend.seo_geo_audit import validate_public_url  # pylint: disable=import-outside-toplevel
+
+    user = validate_api_key(x_api_key)
+    plan, _ = active_plan(user)
+    limits = SITE_AUDIT_PLANS.get(plan)
+    if limits is None:
+        raise HTTPException(status_code=403, detail="De site-audit is beschikbaar vanaf Pro. Zie /api/developers/plans.")
+    if not consume_rate_limit(x_api_key, effective_daily_limit(user)):
+        raise HTTPException(status_code=429, detail="Daglimiet bereikt.")
+    if not consume_limits([(f"site-audit:{user['id']}", 86400, limits["audits_per_day"])]):
+        raise HTTPException(status_code=429,
+                            detail=f"Maximaal {limits['audits_per_day']} site-audits per dag voor {PLANS[plan]['name']}.")
+    try:
+        url = await validate_public_url(request.url.strip())
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    max_pages = min(request.max_pages or limits["max_pages"], limits["max_pages"])
+    audit_id = await asyncio.to_thread(site_audit.create_audit, url, max_pages, f"dev:{user['id']}")
+    return {"id": audit_id, "status": "queued", "max_pages": max_pages,
+            "poll": f"/api/developers/site-audit/{audit_id}"}
+
+
+@router.get("/site-audit/{audit_id}")
+async def get_site_audit(audit_id: str, x_api_key: str = Header(..., alias="X-API-Key")):
+    from backend.benchmark import site_audit  # pylint: disable=import-outside-toplevel
+
+    user = validate_api_key(x_api_key)
+    audit = await asyncio.to_thread(site_audit.get_audit, audit_id, f"dev:{user['id']}")
+    if audit is None:
+        raise HTTPException(status_code=404, detail="Audit niet gevonden")
+    return audit
+
+
 @router.get("/usage", response_model=UsageResponse)
 async def get_usage(x_api_key: str = Header(..., alias="X-API-Key")):
     user = validate_api_key(x_api_key)

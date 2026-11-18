@@ -360,7 +360,7 @@ class StoreTests(unittest.TestCase):
 
 def fake_site(pages: dict[str, tuple[int, str, str]]):
     """Replaces worker.fetch: url -> (status, body, content-type)."""
-    async def fetch(url, domain, *, max_bytes=0, reasons=None):
+    async def fetch(url, domain, *, max_bytes=0, reasons=None, **_):
         if url not in pages:
             return (404, "", url, httpx.Headers({"content-type": "text/html"}))
         status, body, ctype = pages[url]
@@ -402,7 +402,7 @@ class CrawlerTests(unittest.TestCase):
         with patch.object(worker, "fetch", fake_site({"https://x.nl/": (403, "", "text/html")})):
             self.assertEqual(asyncio.run(worker.crawl_domain({"root_domain": "x.nl", "hostname": "x.nl", "category": "onbekend"}))["error"], "blocked: HTTP 403")
 
-        async def none(url, domain, *, max_bytes=0, reasons=None):
+        async def none(url, domain, *, max_bytes=0, reasons=None, **_):
             return None
         with patch.object(worker, "fetch", none):
             self.assertTrue(asyncio.run(worker.crawl_domain({"root_domain": "x.nl", "hostname": "x.nl", "category": "onbekend"}))["error"].startswith("failed"))
@@ -463,7 +463,7 @@ class CrawlerTests(unittest.TestCase):
         self.assertFalse(any(s["is_new"] for s in first_crawl.signals.values()))    # first crawl: nothing is "new"
 
     def test_unreachable_reason_comes_from_https_attempt(self):
-        async def failing(url, domain, *, max_bytes=0, reasons=None):
+        async def failing(url, domain, *, max_bytes=0, reasons=None, **_):
             reasons.append("redirect: other domain" if url.startswith("https") else "failed: timeout")
             return None
         with patch.object(worker, "fetch", failing):

@@ -58,6 +58,8 @@ from api.routes.builder import router as builder_router
 from backend.benchmark import worker as benchmark_worker
 from backend.benchmark.rules import RobotsTxt
 from backend.benchmark.routes import router as benchmark_router
+from backend.benchmark import site_audit as site_audit_runner
+from backend.benchmark.site_audit_routes import router as site_audit_router
 
 # Local application imports
 
@@ -197,6 +199,9 @@ async def lifespan(fastapi_app: FastAPI):
     report_task = asyncio.create_task(accounting_report_loop())
 
     # Benchmark crawler: only when explicitly enabled (BENCHMARK_WORKER=1 in .env).
+    # Site audits on request (psa and Developer API): always on, max 2 at a time.
+    site_audit_task = asyncio.create_task(site_audit_runner.run_audits_forever())
+
     benchmark_task = None
     if os.getenv("BENCHMARK_WORKER") == "1":
         benchmark_task = asyncio.create_task(benchmark_worker.run_forever())
@@ -205,6 +210,7 @@ async def lifespan(fastapi_app: FastAPI):
     yield
 
     report_task.cancel()
+    site_audit_task.cancel()
     if benchmark_task:
         benchmark_task.cancel()
 
@@ -246,6 +252,7 @@ app.include_router(monitoring_router, prefix="/monitoring", tags=["Monitoring"])
 app.include_router(developer_router, prefix="/api/developers", tags=["Developers"])
 app.include_router(builder_router, prefix="/api/builder")
 app.include_router(benchmark_router)
+app.include_router(site_audit_router)
 
 @app.get("/")
 def read_root():

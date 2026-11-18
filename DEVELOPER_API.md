@@ -123,6 +123,22 @@ Profile, externe bedrijfsvermeldingen, zoekresultaten of echte Core Web Vitals.
 De endpoint weigert privé-/lokale IP-adressen, niet-standaard poorten en redirects
 naar niet-publieke adressen.
 
+### 5b. Site-audit (Pro en Premium)
+```bash
+POST /api/developers/site-audit        # X-API-Key + {"url": "https://voorbeeld.nl", "max_pages": 25}  -> 202 {"id": ...}
+GET  /api/developers/site-audit/{id}   # status: queued | running | done | failed; bij done: "result"
+```
+
+De audit bekijkt tot **25 pagina's (Pro)** of **100 pagina's (Premium)** van één site. Hij doet dat als `FajaedeScan` en volgt robots.txt. Per plan geldt een maximum per dag: Pro 5 en Premium 20 audits (in te stellen met `DEVELOPER_PRO_AUDITS_PER_DAY` en `DEVELOPER_PREMIUM_AUDITS_PER_DAY`). Free krijgt 403. Een audit duurt ongeveer 1 tot 3 minuten.
+
+Wat er in het resultaat staat:
+- `score`: het gemiddelde van de SEO-scores per pagina. De homepage telt dubbel.
+- `summary`: het aantal pagina's en de gemiddelde responstijd.
+- `issues`: gesorteerd op ernst (`kritiek`, `belangrijk`, `tip`), met uitleg en maximaal 20 getroffen URL's per issue.
+- `pages`: een overzicht per pagina.
+
+Gecontroleerd worden: foutpagina's, gebroken interne links, interne links naar redirects, ontbrekende of dubbele titels en omschrijvingen, H1-problemen, weinig of dubbele inhoud, noindex, canonicals naar een andere pagina, de sitemap, pagina's die robots.txt blokkeert, trage pagina's, alt-teksten, viewport en taal, en gestructureerde data.
+
 ## Installatie
 
 De Developer API is al geïnstalleerd! Files:

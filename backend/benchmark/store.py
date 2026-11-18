@@ -66,6 +66,17 @@ CREATE TABLE IF NOT EXISTS scores (
 );
 CREATE INDEX IF NOT EXISTS scores_domain ON scores(domain_id, calculated_at);
 
+CREATE TABLE IF NOT EXISTS site_audits (
+    id TEXT PRIMARY KEY,
+    url TEXT NOT NULL,
+    max_pages INTEGER NOT NULL,
+    owner TEXT NOT NULL,                           -- 'psa' or 'dev:<api key id>'
+    status TEXT NOT NULL DEFAULT 'queued',         -- queued | running | done | failed
+    requested_at TEXT NOT NULL, started_at TEXT, finished_at TEXT,
+    result_json TEXT, error TEXT
+);
+CREATE INDEX IF NOT EXISTS site_audits_status ON site_audits(status, requested_at);
+
 CREATE TABLE IF NOT EXISTS benchmarks (
     domain_id INTEGER NOT NULL REFERENCES domains(id) ON DELETE CASCADE,
     cohort TEXT NOT NULL,
