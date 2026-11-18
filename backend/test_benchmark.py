@@ -160,6 +160,13 @@ class SignalsTests(unittest.TestCase):
         self.assertEqual(signals.psa_score(levels), 40)
         self.assertEqual(signals.psa_levels("<a href='/privacy'>p</a>", "http://x.nl/", "http://x.nl/", {})["security"], "S1")
 
+    def test_more_cookie_banners_recognised(self):
+        # fajaede.nl uses Seers CMP: trackers + a known banner + privacy link = P3, not P1.
+        html = ('<a href="/privacy">Privacy</a><div class="seers-cmp-cookie-default-banner-logo"></div>'
+                '<script>gtag("config","G-1")</script>')
+        self.assertEqual(signals.psa_levels(html, self.https, self.https, {})["privacy"], "P3")
+        self.assertEqual(signals.psa_levels(html.replace("seers-cmp", "x"), self.https, self.https, {})["privacy"], "P1")
+
     def test_security_score(self):
         self.assertEqual(signals.security_score("http://x.nl/", {"Strict-Transport-Security": "1"}), 0)
         self.assertEqual(signals.security_score(self.https, {}), 40)

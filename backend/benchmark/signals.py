@@ -17,10 +17,19 @@ AI_CRAWLERS = ["GPTBot", "OAI-SearchBot", "ChatGPT-User", "ClaudeBot", "Claude-S
 
 # --- PSA ----------------------------------------------------------------------------------
 
+# Consent tools (CMPs) + the IAB TCF API. Keep in sync with COOKIE_BANNERS in psa lib/psa-score.ts.
+COOKIE_BANNERS = (
+    "cookiebot", "complianz", "cmplz", "borlabs", "cookieyes", "cookie-law-info", "seers-cmp", "seersco",
+    "cookie-notice", "onetrust", "optanon", "usercentrics", "iubenda", "didomi", "cookiefirst", "klaro",
+    "real-cookie-banner", "moove_gdpr", "moove-gdpr", "termly", "cookie-script", "axeptio", "cookiehub",
+    "consentmanager", "__tcfapi",
+)
+
+
 def psa_levels(html: str, final_url: str, start_url: str, headers: Mapping[str, str]) -> dict[str, str]:
     lower = html.lower()
     has_trackers = any(s in lower for s in ("google-analytics", "gtag(", "fbq(", "hotjar"))
-    has_banner = any(s in lower for s in ("cookiebot", "complianz", "borlabs", "cookieyes"))
+    has_banner = any(s in lower for s in COOKIE_BANNERS)
     has_privacy_link = bool(
         re.search(r"<a[^>]*href=[^>]*>([^<]*(privacy|cookie|voorwaarden|gdpr|avg|policy)[^<]*)</a>", html, re.I)
         or re.search(r"href=[\"'][^\"']*(privacy|cookie|voorwaarden|gdpr|avg|policy)[\"']", html, re.I)
