@@ -14,6 +14,12 @@ Eén merk met twee namen, ingedeeld naar wat de bot doet (uitleg voor site-eigen
 
 Beide zijn in `backend/seo_geo_audit.py` vastgelegd (`CRAWLER_USER_AGENT`, `SCAN_USER_AGENT`). Cloudflare-regel voor eigen sites: `http.user_agent contains "Fajaede"`.
 
+**Ondertekening (Web Bot Auth):** beide bots ondertekenen elk verzoek, zodat Cloudflare ze kan herkennen (`backend/web_bot_auth.py`). De sleutels staan in `.env`:
+- `WEB_BOT_AUTH_SCAN_KEY` (FajaedeScan). Dezelfde waarde staat ook in Vercel bij psa.
+- `WEB_BOT_AUTH_CRAWLER_KEY` (FajaedeBot). Alleen op deze server.
+
+Elke sleutel is een willekeurige seed van 32 bytes, in base64url. De openbare sleutel van FajaedeBot staat op `https://api.fajaede.eu/.well-known/http-message-signatures-directory`, die van FajaedeScan op psa.fajaede.nl.
+
 ## Hoe het werkt
 
 - Per domein crawlt de worker een paar pagina's met de hoogste prioriteit. De volgorde komt uit de sitemap en de links op de homepage. Eerst de homepage, dan diensten, producten, contact en blog. Parameter-URL's, archieven, login en winkelwagen krijgen strafpunten. Dubbele pagina's worden overgeslagen, en robots.txt wordt altijd gevolgd.
