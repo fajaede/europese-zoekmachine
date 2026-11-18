@@ -244,6 +244,12 @@ def _robots_pattern(pattern: str) -> re.Pattern[str]:
     return re.compile("".join(".*" if ch == "*" else re.escape(ch) for ch in body) + ("$" if anchored else ""))
 
 
+def product_token(user_agent: str) -> str:
+    """'FajaedeBot' from 'FajaedeBot/1.0 (...)' and from 'Mozilla/5.0 (compatible; FajaedeBot/1.0; ...)'."""
+    match = re.search(r"compatible;\s*([^/;\s)]+)", user_agent)
+    return (match.group(1) if match else user_agent.split("/", 1)[0]).strip().lower()
+
+
 class RobotsTxt:
     """robots.txt rules per RFC 9309. Unlike urllib.robotparser it supports '*' and '$'
     wildcards and the most-specific-rule precedence: the longest matching pattern wins and
@@ -274,7 +280,7 @@ class RobotsTxt:
             self.groups.append((agents, rules_))
 
     def _rules_for(self, user_agent: str) -> list[tuple[bool, str, re.Pattern[str]]]:
-        token = user_agent.split("/", 1)[0].strip().lower()
+        token = product_token(user_agent)
         specific = [r for agents, rs in self.groups if token in agents for r in rs]
         if any(token in agents for agents, _ in self.groups):
             return specific

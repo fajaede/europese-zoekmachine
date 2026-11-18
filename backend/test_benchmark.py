@@ -92,6 +92,18 @@ class RulesTests(unittest.TestCase):
         self.assertFalse(shared.can_fetch(ua, "https://x.nl/"))
         self.assertTrue(shared.can_fetch("OtherBot", "https://x.nl/"))
 
+    def test_bot_identities(self):
+        from backend.seo_geo_audit import CRAWLER_USER_AGENT, SCAN_USER_AGENT, USER_AGENT
+        self.assertEqual(rules.product_token(CRAWLER_USER_AGENT), "fajaedebot")
+        self.assertEqual(rules.product_token(SCAN_USER_AGENT), "fajaedescan")
+        self.assertEqual(rules.product_token("FajaedeBot/1.0 (+https://x)"), "fajaedebot")
+        self.assertEqual(USER_AGENT, SCAN_USER_AGENT)                 # audit endpoint = on request
+        # A site that blocks our crawler still allows on-demand scans, and the full UA string works too.
+        robots = rules.RobotsTxt("User-agent: FajaedeBot\nDisallow: /\n")
+        self.assertFalse(robots.can_fetch(CRAWLER_USER_AGENT, "https://x.nl/"))
+        self.assertFalse(robots.can_fetch("FajaedeBot", "https://x.nl/"))
+        self.assertTrue(robots.can_fetch(SCAN_USER_AGENT, "https://x.nl/"))
+
     def test_crawlable_urls(self):
         self.assertTrue(rules.is_crawlable_url("https://x.nl/over-ons"))
         self.assertFalse(rules.is_crawlable_url("https://x.nl/brochure.pdf"))

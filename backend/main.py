@@ -43,6 +43,9 @@ from pydantic import BaseModel, Field
 from dotenv import load_dotenv
 from monitoring import router as monitoring_router
 from backend.seo_geo_audit import (
+    CRAWLER_TOKEN,
+    CRAWLER_USER_AGENT,
+    SCAN_TOKEN,
     audit_seo_geo,
     fetch_public_page,
     fetch_public_resource,
@@ -53,6 +56,7 @@ from api.client_ip import client_ip as shared_client_ip
 from api import accounting_report
 from api.routes.builder import router as builder_router
 from backend.benchmark import worker as benchmark_worker
+from backend.benchmark.rules import RobotsTxt
 from backend.benchmark.routes import router as benchmark_router
 
 # Local application imports
@@ -462,7 +466,7 @@ class Crawler:  # pylint: disable=too-few-public-methods
             raise ValueError("Redis client is niet beschikbaar voor de crawler.")
         self.redis = redis_client
         self.meili_index = meili_index
-        user_agent = "FajaedeBot/1.0 (+https://www.fajaede.nl/)"
+        user_agent = CRAWLER_USER_AGENT  # FajaedeBot, see https://psa.fajaede.nl/bot
 
         headers = {
             "User-Agent": user_agent,
@@ -604,8 +608,7 @@ class Crawler:  # pylint: disable=too-few-public-methods
             if robot_parser.mtime() == 0:
                 print(f"Geen robots.txt gevonden voor {url}, sta crawling toe")
             else:
-                user_agent = self.request_headers["User-Agent"]
-                if not robot_parser.can_fetch(user_agent, url):
+                if not robot_parser.can_fetch(CRAWLER_TOKEN, url):
                     print(f"Uitgesloten door robots.txt: {url}")
                     return
 
@@ -1285,9 +1288,8 @@ async def benchmark_seo_geo(url: str = None):
             robots_status, robots_content = await probe("robots.txt")
             robots_allowed = None
             if robots_status is not None and robots_status < 400:
-                robots_parser = RobotFileParser()
-                robots_parser.parse(robots_content.splitlines())
-                robots_allowed = robots_parser.can_fetch("FajaedeAuditBot", final_url)
+                # RFC 9309 matching ('*' and '$' wildcards); urllib.robotparser gets those wrong.
+                robots_allowed = RobotsTxt(robots_content).can_fetch(SCAN_TOKEN, final_url)
 
             declared_sitemaps = [
                 line.split(":", 1)[1].strip()

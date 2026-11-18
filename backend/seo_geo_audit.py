@@ -16,7 +16,14 @@ from bs4 import BeautifulSoup
 
 MAX_HTML_BYTES = 2_000_000
 MAX_REDIRECTS = 5
-USER_AGENT = "FajaedeAuditBot/1.0 (+https://api.fajaede.eu)"
+# One brand, two identities (see https://psa.fajaede.nl/bot):
+# - FajaedeScan: on-demand checks a user asked for (this audit endpoint, psa.fajaede.nl scans)
+# - FajaedeBot: autonomous crawling (search index, benchmark); always follows robots.txt
+SCAN_TOKEN = "FajaedeScan"
+CRAWLER_TOKEN = "FajaedeBot"
+SCAN_USER_AGENT = f"Mozilla/5.0 (compatible; {SCAN_TOKEN}/1.0; +https://psa.fajaede.nl/bot)"
+CRAWLER_USER_AGENT = f"Mozilla/5.0 (compatible; {CRAWLER_TOKEN}/1.0; +https://psa.fajaede.nl/bot)"
+USER_AGENT = SCAN_USER_AGENT  # default: the audit endpoint runs on request
 
 
 def _resolve_public_url(value: str) -> str:

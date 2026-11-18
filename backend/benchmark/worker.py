@@ -21,7 +21,7 @@ import httpx
 from bs4 import BeautifulSoup
 
 from backend.benchmark import rules, signals, store
-from backend.seo_geo_audit import USER_AGENT, audit_seo_geo, fetch_public_resource
+from backend.seo_geo_audit import CRAWLER_TOKEN, CRAWLER_USER_AGENT, audit_seo_geo, fetch_public_resource
 
 PAGE_DELAY_SECONDS = float(os.getenv("BENCHMARK_PAGE_DELAY", "1.0"))   # politeness per domain
 CONCURRENCY = int(os.getenv("BENCHMARK_CONCURRENCY", "4"))             # domains in parallel
@@ -72,7 +72,8 @@ async def fetch(url: str, domain: str, *, max_bytes: int = 2_000_000,
     try:
         body, final_url, status, headers = await fetch_public_resource(
             url, timeout_seconds=10, max_bytes=max_bytes, allowed_domain=domain,
-            headers={"Accept": "text/html,application/xhtml+xml,application/xml,text/plain;q=0.9,*/*;q=0.5"},
+            headers={"Accept": "text/html,application/xhtml+xml,application/xml,text/plain;q=0.9,*/*;q=0.5",
+                     "User-Agent": CRAWLER_USER_AGENT},
         )
     except (ValueError, httpx.HTTPError, OSError) as exc:
         if reasons is not None:
@@ -167,7 +168,7 @@ class Frontier:
 
     def _allowed(self, url: str) -> bool:
         return (url.rstrip("/") != self.home_key and rules.is_crawlable_url(url)
-                and (self.robots is None or self.robots.can_fetch(USER_AGENT, url)))
+                and (self.robots is None or self.robots.can_fetch(CRAWLER_TOKEN, url)))
 
     def score(self, url: str) -> float:
         return rules.url_priority(url, inlinks=self.inlinks.get(url, 0), **self.signals[url])
@@ -288,7 +289,7 @@ async def crawl_domain(domain_row: dict[str, Any], known: dict[str, dict[str, An
     parser: rules.RobotsTxt | None = None
     if robots_tuple and robots_tuple[0] == 200:
         parser = rules.RobotsTxt(robots_tuple[1])
-        if not parser.can_fetch(USER_AGENT, final_url):
+        if not parser.can_fetch(CRAWLER_TOKEN, final_url):
             result["error"] = "blocked: robots.txt"
             return result
     llms_res = await fetch(f"{origin}/llms.txt", domain, max_bytes=200_000)
@@ -497,7 +498,7 @@ def parse_tranco(zip_bytes: bytes, limit: int, tlds: tuple[str, ...] = (".nl", "
 
 
 async def domains_from_tranco(limit: int) -> list[dict[str, Any]]:
-    async with httpx.AsyncClient(timeout=120, follow_redirects=True, headers={"User-Agent": USER_AGENT}) as client:
+    async with httpx.AsyncClient(timeout=120, follow_redirects=True, headers={"User-Agent": CRAWLER_USER_AGENT}) as client:
         response = await client.get(TRANCO_URL)
         response.raise_for_status()
         return await asyncio.to_thread(parse_tranco, response.content, limit)

@@ -3,6 +3,17 @@
 De benchmark vergelijkt een website met vergelijkbare sites:
 "top 18% van de Nederlandse kleine bedrijven". psa.fajaede.nl vraagt die percentielen op via `/api/benchmark/compare`.
 
+## Botnamen
+
+Eén merk met twee namen, ingedeeld naar wat de bot doet (uitleg voor site-eigenaren: https://psa.fajaede.nl/bot):
+
+| Naam | Wat | robots.txt |
+|---|---|---|
+| `FajaedeBot` | Crawlt zelfstandig: de zoekindex en deze benchmark | Wordt altijd gevolgd |
+| `FajaedeScan` | Bekijkt één site op verzoek van een gebruiker: de SEO/GEO-audit (`/api/benchmark/seo-geo`) en de scans op psa.fajaede.nl | Geldt niet; het is een opvraging op verzoek, zoals in een browser |
+
+Beide zijn in `backend/seo_geo_audit.py` vastgelegd (`CRAWLER_USER_AGENT`, `SCAN_USER_AGENT`). Cloudflare-regel voor eigen sites: `http.user_agent contains "Fajaede"`.
+
 ## Hoe het werkt
 
 - Per domein crawlt de worker een paar pagina's met de hoogste prioriteit. De volgorde komt uit de sitemap en de links op de homepage. Eerst de homepage, dan diensten, producten, contact en blog. Parameter-URL's, archieven, login en winkelwagen krijgen strafpunten. Dubbele pagina's worden overgeslagen, en robots.txt wordt altijd gevolgd.
