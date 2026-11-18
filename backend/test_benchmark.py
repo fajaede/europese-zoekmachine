@@ -160,6 +160,24 @@ class SignalsTests(unittest.TestCase):
         self.assertEqual(signals.psa_score(levels), 40)
         self.assertEqual(signals.psa_levels("<a href='/privacy'>p</a>", "http://x.nl/", "http://x.nl/", {})["security"], "S1")
 
+    def test_only_cms_versions_count_as_leak(self):
+        cases = {
+            '<meta name="generator" content="Site Kit by Google 1.192.0">': None,           # plugin
+            '<meta name="generator" content="WordPress">': None,                            # no version
+            '<meta name="generator" content="Elementor 3.2"><meta name="generator" content="WordPress 6.4.2">':
+                "WordPress 6.4.2",                                                          # 2nd tag
+            "<meta content='Joomla! - Open Source Content Management' name='generator'>": None,  # Joomla default
+            "<meta content='Joomla! - Open Source Content Management 4.1' name='generator'>":
+                "Joomla! - Open Source Content Management 4.1",                             # attrs reversed
+            '<meta name="generator" content="Drupal 10 (https://www.drupal.org)">': "Drupal 10 (https://www.drupal.org)",
+        }
+        for html, expected in cases.items():
+            self.assertEqual(signals.cms_version_leak(html), expected, html)
+        # Joomla puts the version after the name: still a leak
+        self.assertEqual(signals.cms_version_leak('<meta name="generator" content="Joomla! 4.1">'), "Joomla! 4.1")
+        site_kit = '<a href="/privacy">p</a><meta name="generator" content="Site Kit by Google 1.192.0">'
+        self.assertEqual(signals.psa_levels(site_kit, self.https, self.https, {})["security"], "S2")
+
     def test_more_cookie_banners_recognised(self):
         # fajaede.nl uses Seers CMP: trackers + a known banner + privacy link = P3, not P1.
         html = ('<a href="/privacy">Privacy</a><div class="seers-cmp-cookie-default-banner-logo"></div>'

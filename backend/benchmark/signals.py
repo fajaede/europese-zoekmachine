@@ -26,6 +26,24 @@ COOKIE_BANNERS = (
 )
 
 
+_CMS_GENERATOR = re.compile(
+    r"^(wordpress|joomla!?|drupal|typo3|magento|prestashop|shopware|ghost|craft cms|concrete ?cms|concrete5|"
+    r"opencart|umbraco|contao|processwire|october ?cms|woocommerce)\b", re.I)
+
+
+def cms_version_leak(html: str) -> str | None:
+    """First generator meta tag exposing a CMS *version* ('WordPress 6.4.2'); plugin generators
+    and versionless names do not count. Keep in sync with cmsVersionLeak in psa lib/psa-score.ts."""
+    for tag in re.findall(r"<meta\b[^>]*>", html, re.I):
+        if not re.search(r"\bname\s*=\s*[\"']generator[\"']", tag, re.I):
+            continue
+        match = re.search(r"\bcontent\s*=\s*[\"']([^\"']*)[\"']", tag, re.I)
+        content = match.group(1).strip() if match else ""
+        if _CMS_GENERATOR.search(content) and re.search(r"\d", content):
+            return content
+    return None
+
+
 def psa_levels(html: str, final_url: str, start_url: str, headers: Mapping[str, str]) -> dict[str, str]:
     lower = html.lower()
     has_trackers = any(s in lower for s in ("google-analytics", "gtag(", "fbq(", "hotjar"))
@@ -44,7 +62,7 @@ def psa_levels(html: str, final_url: str, start_url: str, headers: Mapping[str, 
 
     lowered = {k.lower(): v for k, v in headers.items()}
     is_https = start_url.startswith("https://") or final_url.startswith("https://")
-    has_cms_leak = re.search(r'<meta[^>]*name="generator"[^>]*content="([^"]*)"', html, re.I) is not None
+    has_cms_leak = cms_version_leak(html) is not None
     security = "S2"
     if not is_https or has_cms_leak:
         security = "S1"
