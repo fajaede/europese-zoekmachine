@@ -60,6 +60,7 @@ from backend.benchmark.rules import RobotsTxt
 from backend.benchmark.routes import router as benchmark_router
 from backend.benchmark import site_audit as site_audit_runner
 from backend.benchmark.site_audit_routes import router as site_audit_router
+from backend.web_bot_auth import router as web_bot_auth_router
 
 # Local application imports
 
@@ -253,6 +254,7 @@ app.include_router(developer_router, prefix="/api/developers", tags=["Developers
 app.include_router(builder_router, prefix="/api/builder")
 app.include_router(benchmark_router)
 app.include_router(site_audit_router)
+app.include_router(web_bot_auth_router)
 
 @app.get("/")
 def read_root():

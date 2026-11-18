@@ -14,6 +14,8 @@ from urllib.parse import urljoin, urlsplit, urlunsplit
 import httpx
 from bs4 import BeautifulSoup
 
+from backend.web_bot_auth import sign_request
+
 MAX_HTML_BYTES = 2_000_000
 MAX_REDIRECTS = 5
 # One brand, two identities (see https://psa.fajaede.nl/bot):
@@ -83,6 +85,8 @@ async def fetch_public_resource(
     request_headers = {"User-Agent": USER_AGENT, "Accept": "*/*"}
     if headers:
         request_headers.update(headers)
+    # Web Bot Auth: sign as the identity in the User-Agent (each redirect hop has its own @authority).
+    signer_kind = "crawler" if CRAWLER_TOKEN in request_headers.get("User-Agent", "") else "scan"
 
     async with httpx.AsyncClient(
         timeout=timeout_seconds,
@@ -98,7 +102,7 @@ async def fetch_public_resource(
                 if normalized_hostname != scope and not normalized_hostname.endswith(f".{scope}"):
                     raise ValueError("The redirect left the allowed crawl domain.")
 
-            async with client.stream("GET", current_url) as response:
+            async with client.stream("GET", current_url, headers=sign_request(current_url, signer_kind)) as response:
                 if response.is_redirect:
                     location = response.headers.get("location")
                     if not location:
