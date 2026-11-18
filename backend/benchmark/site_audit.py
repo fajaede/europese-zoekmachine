@@ -25,7 +25,7 @@ MAX_PAGES_LIMIT = 100
 LINK_CHECK_LIMIT = 50          # extra checks of internal links that were not crawled
 SLOW_MS = 2000
 THIN_WORDS = 200
-URLS_PER_ISSUE = 20
+URLS_PER_ISSUE = 500        # all affected URLs (the report pages show the first 20)
 CONCURRENT_AUDITS = 2
 KEEP_DAYS = 90
 

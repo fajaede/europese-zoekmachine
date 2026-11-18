@@ -134,7 +134,7 @@ De audit bekijkt tot **25 pagina's (Pro)** of **100 pagina's (Premium)** van Ã©Ã
 Wat er in het resultaat staat:
 - `score`: het gemiddelde van de SEO-scores per pagina. De homepage telt dubbel.
 - `summary`: het aantal pagina's en de gemiddelde responstijd.
-- `issues`: gesorteerd op ernst (`kritiek`, `belangrijk`, `tip`), met uitleg en maximaal 20 getroffen URL's per issue.
+- `issues`: gesorteerd op ernst (`kritiek`, `belangrijk`, `tip`), met uitleg en alle getroffen URL's per issue (tot 500).
 - `pages`: een overzicht per pagina.
 
 Gecontroleerd worden: foutpagina's, gebroken interne links, interne links naar redirects, ontbrekende of dubbele titels en omschrijvingen, H1-problemen, weinig of dubbele inhoud, noindex, canonicals naar een andere pagina, de sitemap, pagina's die robots.txt blokkeert, trage pagina's, alt-teksten, viewport en taal, en gestructureerde data.
