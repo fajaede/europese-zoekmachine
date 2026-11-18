@@ -16,7 +16,6 @@ import zipfile
 from datetime import datetime, timedelta, timezone
 from typing import Any
 from urllib.parse import urljoin, urlsplit
-from urllib.robotparser import RobotFileParser
 
 import httpx
 from bs4 import BeautifulSoup
@@ -152,7 +151,7 @@ class Frontier:
     """Priority queue of candidate URLs for one domain. Scores use the static signals plus
     internal link authority, which grows while pages are crawled (lazy re-push in a heap)."""
 
-    def __init__(self, home_url: str, host: str, robots: RobotFileParser | None,
+    def __init__(self, home_url: str, host: str, robots: rules.RobotsTxt | None,
                  known: dict[str, dict[str, Any]], homepage_changed: bool,
                  last_crawled: datetime | None = None):
         self.home_key = home_url.rstrip("/")
@@ -213,7 +212,7 @@ class Frontier:
 
 
 def build_frontier(home_url: str, home_html: str, sitemap: list[rules.SitemapEntry], host: str,
-                   robots: RobotFileParser | None, known: dict[str, dict[str, Any]],
+                   robots: rules.RobotsTxt | None, known: dict[str, dict[str, Any]],
                    homepage_changed: bool, last_crawled: datetime | None = None) -> Frontier:
     frontier = Frontier(home_url, host, robots, known, homepage_changed, last_crawled)
     bare = host.lower().removeprefix("www.")
@@ -229,7 +228,7 @@ def build_frontier(home_url: str, home_html: str, sitemap: list[rules.SitemapEnt
 
 
 def pick_pages(home_url: str, home_html: str, sitemap: list[rules.SitemapEntry], host: str,
-               robots: RobotFileParser | None, limit: int) -> list[str]:
+               robots: rules.RobotsTxt | None, limit: int) -> list[str]:
     """Static pick (no recrawl signals): the first limit-1 URLs of a fresh frontier."""
     frontier = build_frontier(home_url, home_html, sitemap, host, robots, {}, False)
     picked = []
@@ -286,10 +285,9 @@ async def crawl_domain(domain_row: dict[str, Any], known: dict[str, dict[str, An
     origin = f"{urlsplit(final_url).scheme}://{urlsplit(final_url).netloc}"
     robots_res = await fetch(f"{origin}/robots.txt", domain, max_bytes=500_000)
     robots_tuple = (robots_res[0], robots_res[1] if robots_res[0] == 200 else "") if robots_res else None
-    parser: RobotFileParser | None = None
+    parser: rules.RobotsTxt | None = None
     if robots_tuple and robots_tuple[0] == 200:
-        parser = RobotFileParser()
-        parser.parse(robots_tuple[1].splitlines())
+        parser = rules.RobotsTxt(robots_tuple[1])
         if not parser.can_fetch(USER_AGENT, final_url):
             result["error"] = "blocked: robots.txt"
             return result

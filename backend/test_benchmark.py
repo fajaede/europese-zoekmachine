@@ -62,6 +62,36 @@ class RulesTests(unittest.TestCase):
         self.assertEqual(rules.backoff_days("blocked: HTTP 503", 0), 1)
         self.assertEqual(rules.backoff_days("iets anders", 0), 30)
 
+    def test_robots_rfc9309(self):
+        ua = "FajaedeAuditBot/1.0 (+https://api.fajaede.eu)"
+        # zorgdoc.nl: only the homepage is allowed (urllib.robotparser wrongly blocked it)
+        zorgdoc = rules.RobotsTxt("User-agent: *\nAllow: /$\nAllow: /favicon.ico$\nDisallow: /\n")
+        self.assertTrue(zorgdoc.can_fetch(ua, "https://zorgdoc.nl/"))
+        self.assertFalse(zorgdoc.can_fetch(ua, "https://zorgdoc.nl/artsen"))
+        self.assertTrue(zorgdoc.can_fetch(ua, "https://zorgdoc.nl/favicon.ico"))
+        # delpher.nl: everyone blocked, only whitelisted search bots allowed
+        delpher = rules.RobotsTxt("# Block all\nUser-Agent: *\nDisallow: /\n\nUser-Agent: Googlebot\nAllow: /\n")
+        self.assertFalse(delpher.can_fetch(ua, "https://delpher.nl/"))
+        self.assertTrue(delpher.can_fetch("Googlebot/2.1", "https://delpher.nl/"))
+        # longest match wins; Allow wins a tie; wildcards; query strings
+        r = rules.RobotsTxt("User-agent: *\nDisallow: /shop\nAllow: /shop/info\nDisallow: /*?sort=\n"
+                            "Disallow: /*.pdf$\nAllow: /p\nDisallow: /p\n")
+        self.assertFalse(r.can_fetch(ua, "https://x.nl/shop/item"))
+        self.assertTrue(r.can_fetch(ua, "https://x.nl/shop/info/a"))
+        self.assertFalse(r.can_fetch(ua, "https://x.nl/lijst?sort=prijs"))
+        self.assertFalse(r.can_fetch(ua, "https://x.nl/a/b.pdf"))
+        self.assertTrue(r.can_fetch(ua, "https://x.nl/a/b.pdf?x=1"))   # '$' anchors the end
+        self.assertTrue(r.can_fetch(ua, "https://x.nl/p"))              # tie: Allow wins
+        # our own group overrides '*'; empty Disallow = allow all; no rules = allow
+        own = rules.RobotsTxt("User-agent: *\nDisallow: /\n\nUser-agent: FajaedeAuditBot\nDisallow:\n")
+        self.assertTrue(own.can_fetch(ua, "https://x.nl/alles"))
+        self.assertTrue(rules.RobotsTxt("").can_fetch(ua, "https://x.nl/"))
+        self.assertTrue(rules.RobotsTxt("<!DOCTYPE html><html>niet gevonden</html>").can_fetch(ua, "https://x.nl/"))
+        # several user-agent lines share one group
+        shared = rules.RobotsTxt("User-agent: GPTBot\nUser-agent: FajaedeAuditBot\nDisallow: /\n")
+        self.assertFalse(shared.can_fetch(ua, "https://x.nl/"))
+        self.assertTrue(shared.can_fetch("OtherBot", "https://x.nl/"))
+
     def test_crawlable_urls(self):
         self.assertTrue(rules.is_crawlable_url("https://x.nl/over-ons"))
         self.assertFalse(rules.is_crawlable_url("https://x.nl/brochure.pdf"))

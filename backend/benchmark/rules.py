@@ -235,6 +235,63 @@ def sitemaps_from_robots(robots_text: str) -> list[str]:
             if line.lower().startswith("sitemap:") and line.split(":", 1)[1].strip()]
 
 
+# --- robots.txt (RFC 9309, as Google and Bing apply it) --------------------------------------
+
+def _robots_pattern(pattern: str) -> re.Pattern[str]:
+    """'*' = any characters, a trailing '$' = end of the URL path; everything else literal."""
+    anchored = pattern.endswith("$")
+    body = pattern[:-1] if anchored else pattern
+    return re.compile("".join(".*" if ch == "*" else re.escape(ch) for ch in body) + ("$" if anchored else ""))
+
+
+class RobotsTxt:
+    """robots.txt rules per RFC 9309. Unlike urllib.robotparser it supports '*' and '$'
+    wildcards and the most-specific-rule precedence: the longest matching pattern wins and
+    Allow wins a tie. E.g. 'Allow: /$' + 'Disallow: /' allows only the homepage."""
+
+    def __init__(self, text: str):
+        self.groups: list[tuple[set[str], list[tuple[bool, str, re.Pattern[str]]]]] = []
+        agents: set[str] | None = None
+        rules_: list[tuple[bool, str, re.Pattern[str]]] = []
+        in_rules = False
+        for raw in text.splitlines():
+            line = raw.split("#", 1)[0].strip()
+            if ":" not in line:
+                continue
+            field, value = (part.strip() for part in line.split(":", 1))
+            field = field.lower()
+            if field == "user-agent":
+                if agents is None or in_rules:
+                    if agents is not None:
+                        self.groups.append((agents, rules_))
+                    agents, rules_, in_rules = set(), [], False
+                agents.add(value.lower())
+            elif field in {"allow", "disallow"} and agents is not None:
+                in_rules = True
+                if value:  # an empty Disallow allows everything: no rule
+                    rules_.append((field == "allow", value, _robots_pattern(value)))
+        if agents is not None:
+            self.groups.append((agents, rules_))
+
+    def _rules_for(self, user_agent: str) -> list[tuple[bool, str, re.Pattern[str]]]:
+        token = user_agent.split("/", 1)[0].strip().lower()
+        specific = [r for agents, rs in self.groups if token in agents for r in rs]
+        if any(token in agents for agents, _ in self.groups):
+            return specific
+        return [r for agents, rs in self.groups if "*" in agents for r in rs]
+
+    def can_fetch(self, user_agent: str, url: str) -> bool:
+        parts = urlsplit(url)
+        path = (parts.path or "/") + (f"?{parts.query}" if parts.query else "")
+        best: tuple[int, bool] | None = None
+        for allow, pattern, regex in self._rules_for(user_agent):
+            if regex.match(path):
+                candidate = (len(pattern), allow)
+                if best is None or candidate[0] > best[0] or (candidate[0] == best[0] and allow):
+                    best = candidate
+        return True if best is None else best[1]
+
+
 MIN_GROUP_SIZE = 5
 
 
