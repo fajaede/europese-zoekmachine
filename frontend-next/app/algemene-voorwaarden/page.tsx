@@ -141,8 +141,7 @@ export default function AlgemeneVoorwaarden() {
           </li>
           <li>
             <strong>Aankoop als bedrijf:</strong> geeft u bij het afrekenen uw bedrijfsnaam, adres en btw-nummer op,
-            dan controleren wij het btw-nummer via VIES van de Europese Commissie en ontvangt u binnen 5 werkdagen een
-            factuur op naam van uw bedrijf. Bedrijven betalen dezelfde prijs als particulieren, zonder btw (zie hierboven).
+            dan ontvangt u binnen 5 werkdagen een factuur op naam van uw bedrijf. Bedrijven betalen dezelfde prijs als particulieren, zonder btw (zie hierboven).
             U bent verantwoordelijk voor de juistheid van de opgegeven gegevens.
           </li>
         </ul>

@@ -47,8 +47,8 @@ PLANS = {
 PLAN_RANK = {"free": 0, "pro": 1, "premium": 2}
 
 VAT_RATE = Decimal("0.21")   # only for orders created before the small-enterprise exemption
-VIES_URL = "https://ec.europa.eu/taxation_customs/vies/rest-api/ms/{country}/vat/{number}"
-# EU member states as used by VIES (Greece is EL).
+# EU member states as VAT-number prefixes (Greece is EL). The number is only checked for its format:
+# under the small-enterprise VAT exemption it has no tax effect (no VIES call, no data to the Commission).
 EU_VAT_COUNTRIES = {
     "AT", "BE", "BG", "CY", "CZ", "DE", "DK", "EE", "EL", "ES", "FI", "FR", "HR", "HU",
     "IE", "IT", "LT", "LU", "LV", "MT", "NL", "PL", "PT", "RO", "SE", "SI", "SK",
@@ -82,23 +82,6 @@ def normalize_vat_number(raw: str) -> tuple[str, str] | None:
         return None
     return country, match.group(2)
 
-
-async def check_vies(country: str, number: str) -> bool | None:
-    """True/False from VIES; None when VIES or the member state is unavailable."""
-    try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            response = await client.get(VIES_URL.format(country=country, number=number))
-            response.raise_for_status()
-            result = response.json()
-    except (httpx.HTTPError, ValueError):
-        logger.exception("VIES check failed for %s", country)
-        return None
-    if result.get("isValid") is True:
-        return True
-    # A definite "no"; anything else (MS_UNAVAILABLE, TIMEOUT, ...) means: try again later.
-    if result.get("isValid") is False and result.get("userError") in {"VALID", "INVALID", "INVALID_INPUT"}:
-        return False
-    return None
 
 DB_PATH = os.getenv(
     "DEVELOPER_KEYS_DB_PATH",
@@ -820,14 +803,8 @@ async def create_developer_checkout(
                 status_code=400,
                 detail="Vul bedrijfsnaam, adres en een geldig EU-btw-nummer in (bijvoorbeeld BE0123456789).",
             )
-        valid = await check_vies(*vat)
-        if valid is None:
-            raise HTTPException(
-                status_code=503,
-                detail="De Europese btw-controle (VIES) is tijdelijk niet bereikbaar. Probeer het over enkele minuten opnieuw.",
-            )
-        if not valid:
-            raise HTTPException(status_code=400, detail="Dit btw-nummer is volgens VIES niet geldig.")
+        if vat[0] == "BE" and not re.fullmatch(r"[01]\d{9}", vat[1]):
+            raise HTTPException(status_code=400, detail="Vul een geldig Belgisch btw-nummer in, bijvoorbeeld BE0123456789.")
         invoice_vat = "".join(vat)
         # no reverse charge: fajaede uses the small-enterprise VAT exemption, so no VAT is charged at all
 
@@ -1098,7 +1075,7 @@ async def _notify_invoice_needed(order_id: str, payment_id: str, email: str, pla
         intro
         + f"Klant:       {order['invoice_name']}\n"
         f"Adres:       {order['invoice_address']}\n"
-        f"Btw-nummer:  {order['invoice_vat']} (geldig volgens VIES)\n"
+        f"Btw-nummer:  {order['invoice_vat']}\n"
         f"E-mail:      {email}\n\n"
         f"Product:     {plan['name']}-pas, {order['days']} dagen\n"
         + _amount_lines(order)

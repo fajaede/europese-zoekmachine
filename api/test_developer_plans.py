@@ -182,7 +182,7 @@ class DeveloperPlanTests(unittest.TestCase):
         self.assertIsNone(developer_api.normalize_vat_number("GB123456789"))  # not EU
         self.assertIsNone(developer_api.normalize_vat_number("<script>"))
 
-    def _business_checkout(self, vat_number, vies_result):
+    def _business_checkout(self, vat_number, vies_result=None):
         created = {}
 
         class FakeResponse:
@@ -205,8 +205,8 @@ class DeveloperPlanTests(unittest.TestCase):
             async def __aexit__(self, *_args):
                 return None
 
-            async def get(self, *_args, **_kwargs):  # VIES
-                return FakeResponse(vies_result)
+            async def get(self, *_args, **_kwargs):  # must not happen: no VIES call any more
+                raise AssertionError("unexpected GET (VIES)")
 
             async def post(self, *_args, json=None, **_kwargs):  # Mollie
                 created.update(json)
@@ -256,13 +256,15 @@ class DeveloperPlanTests(unittest.TestCase):
         old = developer_api._amount_lines({"amount": "7.44", "reverse_charge": 1})   # order from before
         self.assertIn("Btw verlegd", old)
 
-    def test_invalid_or_unavailable_vies_blocks_checkout(self):
-        response, created = self._business_checkout("NL123456789B01", {"isValid": False, "userError": "INVALID"})
+    def test_vat_number_format_only_no_vies(self):
+        response, created = self._business_checkout("BE12")             # Belgian number: wrong format
         self.assertEqual(response.status_code, 400)
         self.assertEqual(created, {})
-        response, created = self._business_checkout("DE123456789", {"isValid": False, "userError": "MS_UNAVAILABLE"})
-        self.assertEqual(response.status_code, 503)
-        self.assertEqual(created, {})
+        response, created = self._business_checkout("XX123")            # not an EU prefix
+        self.assertEqual(response.status_code, 400)
+        response, created = self._business_checkout("DE123456789")      # accepted without asking VIES
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(created["amount"], {"currency": "EUR", "value": "9.00"})
 
     def test_reverse_charge_webhook_confirms_and_requests_invoice(self):
         conn = developer_api.get_db()
