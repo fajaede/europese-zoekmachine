@@ -142,3 +142,22 @@ curl -H "X-Benchmark-Key: $BENCHMARK_API_KEY" \
 ```
 
 Het antwoord geeft per score `percentile`, `top_percent`, `rank`, `group_size`, `cohort` en `cohort_label` (bijvoorbeeld "Nederlandse kleine bedrijven / mkb"), plus `data_as_of`.
+
+## Autoriteit uit Common Crawl (backlinks, gratis)
+
+Common Crawl publiceert elke paar maanden een linkkaart van het web. Het rangbestand (~2,4 GB gzip,
+~135 miljoen domeinen) wordt als stroom gelezen; alleen .nl- en .be-domeinen worden bewaard in
+`backend/authority.db` (los van `benchmark.db`, dus de crawler merkt er niets van).
+
+- **Autoriteit (0-100)** = aandeel van de .nl- (of .be-)domeinen met een lagere harmonische
+  centraliteit: "beter dan X% van alle .nl-domeinen". Gelijke waarden krijgen dezelfde score.
+- `/api/benchmark/competitors` geeft `your_authority` en per concurrent `authority` (null zonder import).
+
+```bash
+docker exec fajaede-backend python -m backend.benchmark.authority import        # nieuwste uitgave, enkele minuten
+docker exec fajaede-backend python -m backend.benchmark.authority status
+docker exec fajaede-backend python -m backend.benchmark.authority seed 40000    # sterkste nieuwe domeinen naar de crawler
+```
+
+Een nieuwe import vervangt de vorige pas als hij volledig gelukt is. Herhaal hem bij een nieuwe
+uitgave (zie https://commoncrawl.org/web-graphs).

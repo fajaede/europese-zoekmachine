@@ -9,7 +9,8 @@ Admin (X-Admin-Key):
 psa.fajaede.nl (X-Benchmark-Key = BENCHMARK_API_KEY):
   GET  /api/benchmark/compare?domain=voorbeeld.nl&psa=82&seo=67&geo=40&ai=50
   GET  /api/benchmark/competitors?domain=voorbeeld.nl&psa=82&seo=67&geo=40&ai=50&limit=3
-       (+ "distribution": sites per score 0-100 for overall/psa/seo/geo/ai, groups of 30+)
+       (+ "distribution": sites per score 0-100 for overall/psa/seo/geo/ai, groups of 30+;
+          "your_authority" / entry "authority": Common Crawl authority 0-100, see authority.py)
 """
 
 from __future__ import annotations
@@ -22,7 +23,7 @@ from typing import Any, Literal
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from backend.benchmark import rules, store, worker
+from backend.benchmark import authority, rules, store, worker
 from backend.benchmark.competitors import find_competitors
 
 router = APIRouter(prefix="/api/benchmark", tags=["benchmark"])
@@ -166,7 +167,19 @@ async def competitors(request: Request, domain: str, category: str | None = None
 
     result = find_competitors(await asyncio.to_thread(_rows), rules.root_domain(domain), scores, category, limit)
     result["cohort_label"] = cohort_label(result["cohort"]) if result["cohort"] else None
+    add_authority(result)
     return result
+
+
+def add_authority(result: dict[str, Any]) -> None:
+    """Common Crawl authority (0-100, share of the country's domains with fewer/weaker links) for
+    you and each named competitor; None when unknown or not imported yet."""
+    entries = [e for e in (*result.get("ahead", []), result.get("leader"), result.get("behind")) if e]
+    found = authority.lookup([result["domain"], *(e["domain"] for e in entries)])
+    score = lambda domain: (found.get(domain) or {}).get("score")
+    result["your_authority"] = score(result["domain"])
+    for entry in entries:
+        entry["authority"] = score(entry["domain"])
 
 
 @router.get("/compare")
