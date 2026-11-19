@@ -941,7 +941,7 @@ async def _send_purchase_confirmation(email: str, payment_id: str, order_id: str
     body = (
         "Bedankt voor je aankoop bij fajaede Builder.\n\n"
         f"Product: {CREDIT_PACK_SIZE} credits voor fajaede Builder\n"
-        f"Bedrag: EUR {CREDIT_PACK_PRICE.replace('.', ',')} (inclusief btw)\n"
+        f"Bedrag: EUR {CREDIT_PACK_PRICE.replace('.', ',')} (geen btw: bijzondere vrijstellingsregeling kleine ondernemingen)\n"
         + (f"Factuurnummer: {invoice['invoice_number']} (de factuur zit als PDF in de bijlage)\n" if invoice else "")
         + f"Bestelnummer: {order_id}\n"
         f"Mollie-betaling: {payment_id}\n\n"

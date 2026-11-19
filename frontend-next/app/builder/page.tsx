@@ -378,15 +378,15 @@ export default function BuilderPage() {
             </p>
             <h2 className="text-2xl font-bold text-slate-900">Eén website gratis proberen</h2>
             <p className="mt-2 max-w-2xl text-sm leading-relaxed text-slate-600">
-              Na je gratis aanvraag betaal je €0,50 per generatie. Laad 10 credits op voor €5,00,
-              inclusief btw. Eenmalige betaling, geen abonnement.
+              Na je gratis aanvraag betaal je €0,50 per generatie. Laad 10 credits op voor €5,00.
+              Eenmalige betaling, geen abonnement.
             </p>
           </div>
           <div className="rounded-2xl bg-slate-50 p-5 text-center md:min-w-56">
             <p className="text-sm font-semibold text-slate-500">Creditpakket</p>
             <p className="mt-1 text-3xl font-black text-slate-900">€5,00</p>
             <p className="text-sm text-slate-600">10 aanvragen · €0,50 per stuk</p>
-            <p className="mt-1 text-xs text-slate-500">Inclusief btw</p>
+            <p className="mt-1 text-xs text-slate-500">Geen btw (vrijstellingsregeling kleine ondernemingen)</p>
           </div>
 
           <div className="md:col-span-2 border-t border-slate-200 pt-5">

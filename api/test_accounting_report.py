@@ -90,6 +90,25 @@ class AccountingReportTests(unittest.TestCase):
         self.assertEqual(nl[14], "Firma =NL BV")  # "=" not at the start: no prefix needed
         self.assertEqual(nl[16:18], ["NL123456789B01", "Ja"])
 
+    def test_rows_use_the_invoice_as_issued_without_vat(self):
+        from api import invoices
+        invoices.issue_invoice(mollie_id="tr_builder_live", order_id="b1", product="builder",
+                               description="Builder: 10 credits", amount="5.00", mode="live",
+                               customer_email="klant@example.com")
+        rows = accounting_report.collect_rows(THURSDAY - 7 * 86400, THURSDAY)
+        builder_row = next(r for r in rows if r[1] == "tr_builder_live")
+        self.assertEqual(builder_row[7:11], ["5,00", "0%", "0,00", "5,00"])   # exemption: no VAT
+        self.assertTrue(builder_row[0].startswith("EU-"))
+
+    def test_exemption_line_counts_this_years_sales(self):
+        line = accounting_report.exemption_line(THURSDAY)
+        # this year: builder 5.00 (twice: b1 and b4) + developer 65.29 + 9.00
+        self.assertIn("EUR 84,29", line)
+        self.assertIn("vrijstellingsgrens van EUR 25.000", line)
+        self.assertNotIn("LET OP", line)
+        with patch.object(accounting_report, "EXEMPTION_LIMIT", accounting_report.Decimal("100")):
+            self.assertIn("LET OP", accounting_report.exemption_line(THURSDAY))
+
     def test_formula_injection_is_neutralised(self):
         self.assertEqual(accounting_report._cell("=HYPERLINK(1)"), "'=HYPERLINK(1)")
 

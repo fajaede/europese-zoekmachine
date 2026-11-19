@@ -46,7 +46,7 @@ PLANS = {
 }
 PLAN_RANK = {"free": 0, "pro": 1, "premium": 2}
 
-VAT_RATE = Decimal("0.21")
+VAT_RATE = Decimal("0.21")   # only for orders created before the small-enterprise exemption
 VIES_URL = "https://ec.europa.eu/taxation_customs/vies/rest-api/ms/{country}/vat/{number}"
 # EU member states as used by VIES (Greece is EL).
 EU_VAT_COUNTRIES = {
@@ -56,12 +56,14 @@ EU_VAT_COUNTRIES = {
 
 
 def price_excl_vat(price_incl: str) -> str:
-    """Price without 21% Belgian VAT, rounded to cents."""
+    """Price without 21% Belgian VAT, rounded to cents (only for orders from before the exemption)."""
     value = Decimal(price_incl) / (Decimal(1) + VAT_RATE)
     return str(value.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
 
 
 def expected_amount(plan_key: str, days: int, reverse_charge: bool) -> str | None:
+    """The amount to pay. New orders never use reverse charge (small-enterprise VAT exemption: one price
+    for everyone, no VAT); `reverse_charge` stays for orders created before the exemption."""
     plan = PLANS.get(plan_key)
     price = plan["prices"].get(days) if plan else None
     if price is None:
@@ -827,7 +829,7 @@ async def create_developer_checkout(
         if not valid:
             raise HTTPException(status_code=400, detail="Dit btw-nummer is volgens VIES niet geldig.")
         invoice_vat = "".join(vat)
-        reverse_charge = vat[0] != "BE"
+        # no reverse charge: fajaede uses the small-enterprise VAT exemption, so no VAT is charged at all
 
     amount = expected_amount(payload.plan, payload.days, reverse_charge)
     order_id = str(uuid.uuid4())
@@ -976,6 +978,9 @@ def _euro(value: str | Decimal) -> str:
 
 
 def _amount_lines(order: dict) -> str:
+    if not order.get("reverse_charge"):
+        from api.invoices import EXEMPTION_NOTE  # pylint: disable=import-outside-toplevel
+        return f"Bedrag: {_euro(order['amount'])}\nGeen btw: {EXEMPTION_NOTE.lower()}\n"
     if order.get("reverse_charge"):
         return (
             f"Bedrag: {_euro(order['amount'])} exclusief btw\n"

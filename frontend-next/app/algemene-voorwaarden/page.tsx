@@ -102,7 +102,7 @@ export default function AlgemeneVoorwaarden() {
         <ul>
           <li>Na uw gratis aanvraag kost elke generatie 1 credit.</li>
           <li>
-            Een creditpakket bevat 10 credits en kost <strong>€5,00 inclusief btw</strong> (€0,50 per generatie). Dit is
+            Een creditpakket bevat 10 credits en kost <strong>€5,00</strong> (€0,50 per generatie). Dit is
             een eenmalige betaling, geen abonnement.
           </li>
           <li>Betalingen verlopen via onze betaaldienstverlener Mollie. Wij ontvangen geen kaart- of bankgegevens.</li>
@@ -111,6 +111,11 @@ export default function AlgemeneVoorwaarden() {
             de credit automatisch teruggezet.
           </li>
           <li>Credits zijn persoonlijk, niet overdraagbaar en niet inwisselbaar voor geld.</li>
+          <li>
+            <strong>Btw:</strong> fajaede valt onder de bijzondere vrijstellingsregeling van belastingplichtige kleine
+            ondernemingen. Er wordt geen btw aangerekend: de vermelde prijzen zijn de eindprijzen, voor particulieren
+            en bedrijven, en de btw kan dus ook niet worden afgetrokken.
+          </li>
         </ul>
         <p>
           <strong>Developer API:</strong>
@@ -125,7 +130,7 @@ export default function AlgemeneVoorwaarden() {
             dagen.
           </li>
           <li>
-            Alle prijzen zijn inclusief btw. Een pas is een eenmalige, vooraf betaalde periode en wordt nooit
+            Een pas is een eenmalige, vooraf betaalde periode en wordt nooit
             automatisch verlengd. Een nieuwe pas van hetzelfde pakket wordt opgeteld bij de resterende dagen. Bij een
             upgrade van Pro naar Premium worden de resterende Pro-dagen naar verhouding van de prijs omgezet in
             Premium-dagen.
@@ -137,9 +142,8 @@ export default function AlgemeneVoorwaarden() {
           <li>
             <strong>Aankoop als bedrijf:</strong> geeft u bij het afrekenen uw bedrijfsnaam, adres en btw-nummer op,
             dan controleren wij het btw-nummer via VIES van de Europese Commissie en ontvangt u binnen 5 werkdagen een
-            factuur. Belgische bedrijven betalen de prijs inclusief 21% btw. Bedrijven uit een andere EU-lidstaat met
-            een geldig btw-nummer betalen de prijs exclusief btw; de btw wordt verlegd naar de afnemer (artikel 196
-            van Richtlijn 2006/112/EG). U bent verantwoordelijk voor de juistheid van de opgegeven gegevens.
+            factuur op naam van uw bedrijf. Bedrijven betalen dezelfde prijs als particulieren, zonder btw (zie hierboven).
+            U bent verantwoordelijk voor de juistheid van de opgegeven gegevens.
           </li>
         </ul>
       </Section>

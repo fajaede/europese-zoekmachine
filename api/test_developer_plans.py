@@ -231,11 +231,13 @@ class DeveloperPlanTests(unittest.TestCase):
             )
         return response, created
 
-    def test_eu_business_pays_excl_vat_and_belgian_business_incl(self):
+    def test_every_business_pays_the_same_price_without_vat(self):
+        # small-enterprise VAT exemption: no reverse charge, one price for consumers and businesses
         response, created = self._business_checkout("NL123456789B01", {"isValid": True, "userError": "VALID"})
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(created["amount"], {"currency": "EUR", "value": "7.44"})
-        self.assertTrue(created["metadata"]["reverse_charge"])
+        self.assertEqual(created["amount"], {"currency": "EUR", "value": "9.00"})
+        self.assertFalse(created["metadata"]["reverse_charge"])
+        self.assertNotIn("btw verlegd", created["description"])
 
         response, created = self._business_checkout("BE0123456789", {"isValid": True, "userError": "VALID"})
         self.assertEqual(response.status_code, 200)
@@ -245,6 +247,14 @@ class DeveloperPlanTests(unittest.TestCase):
         names = [row[0] for row in conn.execute("SELECT invoice_name FROM developer_payments")]
         conn.close()
         self.assertEqual(names, ["Bakkerij Test BV", "Bakkerij Test BV"])
+
+    def test_confirmation_amount_lines_without_vat(self):
+        lines = developer_api._amount_lines({"amount": "9.00", "reverse_charge": 0})
+        self.assertIn("EUR 9,00", lines)
+        self.assertIn("vrijstellingsregeling", lines)
+        self.assertNotIn("21%", lines)
+        old = developer_api._amount_lines({"amount": "7.44", "reverse_charge": 1})   # order from before
+        self.assertIn("Btw verlegd", old)
 
     def test_invalid_or_unavailable_vies_blocks_checkout(self):
         response, created = self._business_checkout("NL123456789B01", {"isValid": False, "userError": "INVALID"})

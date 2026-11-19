@@ -72,9 +72,18 @@ def _local(ts: int) -> str:
     return datetime.fromtimestamp(int(ts), LOCAL_TZ).strftime("%d-%m-%Y %H:%M")
 
 
+# Belgian small-enterprise VAT exemption: annual turnover limit for the whole business (all channels).
+EXEMPTION_LIMIT = Decimal("25000")
+
+
 def _row(*, payment_id, plan, country_code, customer_type, amount, reverse, paid_at, customer,
-         address="", vat_number="", invoice_number="") -> list[str]:
-    excl, vat, total, rate = _split_vat(amount, reverse)
+         address="", vat_number="", invoice_number="", invoice: dict | None = None) -> list[str]:
+    if invoice is not None:   # the invoice as issued: no VAT under the exemption, older ones with VAT
+        excl, vat, total = (Decimal(invoice["price_excl"]), Decimal(invoice["vat_amount"]),
+                            Decimal(invoice["amount"]))
+        rate = f"{int(Decimal(invoice['vat_rate']) * 100)}%"
+    else:
+        excl, vat, total, rate = _split_vat(amount, reverse)
     known_country = bool(country_code)
     return [
         _cell(invoice_number),  # EU-YYYY-NNNN, or PEPPOL-NNNN when the invoice comes via Peppol
@@ -90,21 +99,28 @@ def _row(*, payment_id, plan, country_code, customer_type, amount, reverse, paid
     ]
 
 
-def _invoice_numbers() -> dict[str, str]:
-    """Mollie payment id -> invoice number (EU-... or PEPPOL-...)."""
+def _invoices_by_payment() -> dict[str, dict]:
+    """Mollie payment id -> invoice row (EU-... or PEPPOL-...), with the amounts as invoiced."""
     from api import invoices  # pylint: disable=import-outside-toplevel
 
     conn = invoices._db()  # pylint: disable=protected-access
     try:
-        return {r["mollie_id"]: r["invoice_number"] for r in conn.execute("SELECT mollie_id, invoice_number FROM eu_invoices")}
+        return {r["mollie_id"]: dict(r) for r in conn.execute("SELECT * FROM eu_invoices")}
     finally:
         conn.close()
+
+
+def year_to_date_total(until: int) -> Decimal:
+    """Live sales of fajaede.eu from 1 January of the year of `until` up to `until` (for the limit)."""
+    start = int(datetime.fromtimestamp(until, LOCAL_TZ).replace(month=1, day=1, hour=0, minute=0, second=0,
+                                                                 microsecond=0).timestamp())
+    return sum((Decimal(row[10].replace(",", ".")) for row in collect_rows(start, until)), Decimal("0"))
 
 
 def collect_rows(since: int, until: int) -> list[list[str]]:
     """All paid live payments of both products with granted_at in [since, until)."""
     rows: list[tuple[int, list[str]]] = []
-    numbers = _invoice_numbers()
+    invoiced = _invoices_by_payment()
 
     conn = builder._connect()  # pylint: disable=protected-access
     try:
@@ -120,7 +136,8 @@ def collect_rows(since: int, until: int) -> list[list[str]]:
                 payment_id=p["mollie_id"], plan=f"Builder: {p['credits']} credits", country_code="",
                 customer_type="particulier", amount=p["amount"], reverse=False,
                 paid_at=p["granted_at"], customer=p["email"] or "",
-                invoice_number=numbers.get(p["mollie_id"], ""),
+                invoice_number=(invoiced.get(p["mollie_id"]) or {}).get("invoice_number", ""),
+                invoice=invoiced.get(p["mollie_id"]),
             )))
     except sqlite3.OperationalError:
         logger.info("No builder payments table yet")
@@ -146,7 +163,8 @@ def collect_rows(since: int, until: int) -> list[list[str]]:
                 amount=p["amount"], reverse=bool(p["reverse_charge"]), paid_at=p["granted_at"],
                 customer=p["invoice_name"] if is_business else (p["email"] or ""),
                 address=p["invoice_address"] or "", vat_number=p["invoice_vat"] or "",
-                invoice_number=numbers.get(p["mollie_id"], ""),
+                invoice_number=(invoiced.get(p["mollie_id"]) or {}).get("invoice_number", ""),
+                invoice=invoiced.get(p["mollie_id"]),
             )))
     except sqlite3.OperationalError:
         logger.info("No developer payments table yet")
@@ -210,6 +228,17 @@ def _invoices_zip(since: int, until: int) -> tuple[str, bytes] | None:
     return f"fajaede-eu-facturen-{datetime.fromtimestamp(until, LOCAL_TZ):%Y-%m-%d}.zip", buffer.getvalue()
 
 
+def exemption_line(until: int) -> str:
+    """Year-to-date sales of this channel against the exemption limit (which counts all channels)."""
+    total = year_to_date_total(until)
+    share = int(total * 100 / EXEMPTION_LIMIT)
+    warning = "  LET OP: boven 80% van de grens, overleg met de boekhouder.\n" if share >= 80 else ""
+    return (
+        f"- Omzet fajaede.eu dit jaar: EUR {_money(total)} ({share}% van de vrijstellingsgrens van EUR 25.000;\n"
+        "  die grens geldt voor psa.fajaede.nl, de FajaedeSEO-plugin en fajaede.eu samen).\n" + warning
+    )
+
+
 def send_report(since: int, until: int, recipients: list[str] | str) -> int:
     """Email the report for [since, until) to every recipient (one mail each); returns the number of sales."""
     if isinstance(recipients, str):
@@ -231,9 +260,10 @@ def send_report(since: int, until: int, recipients: list[str] | str) -> int:
         + "Zelfde kolommen als het weekrapport van de FajaedeSEO-plugin.\n"
         "- EU-JJJJ-NNNN: factuur die de website zelf verstuurt (particulieren en buitenlandse bedrijven).\n"
         "- PEPPOL-NNNN: Belgisch bedrijf; die factuur wordt via Peppol vanuit het boekhoudprogramma verstuurd.\n"
-        "- Particulieren betalen inclusief 21% Belgische btw. Hun land wordt niet gevraagd\n"
-        "  (onder de OSS-drempel geldt Belgische btw).\n"
-        "- Testbetalingen (Mollie testmodus) zijn niet opgenomen.\n"
+        "- Btw: fajaede valt onder de bijzondere vrijstellingsregeling van belastingplichtige kleine\n"
+        "  ondernemingen. Nieuwe facturen hebben geen btw; facturen van daarvoor tonen hun oude btw.\n"
+        + exemption_line(until)
+        + "- Testbetalingen (Mollie testmodus) zijn niet opgenomen.\n"
     )
     filename = f"fajaede-eu-verkopen-{datetime.fromtimestamp(until, LOCAL_TZ):%Y-%m-%d}.csv"
     attachments = [(filename, build_csv(rows), "text/csv")]

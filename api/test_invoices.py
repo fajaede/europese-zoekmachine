@@ -68,9 +68,26 @@ class InvoiceTests(unittest.TestCase):
         self.assertFalse(invoices.is_real_invoice(peppol))
         self.assertEqual(self._issue("tr_x")["invoice_number"], f"EU-{year}-0001")  # still the first EU number
 
-    def test_amounts_vat_and_reverse_charge(self):
+    def test_amounts_without_vat_and_old_reverse_charge(self):
         b2c = self._issue("tr_b2c")
-        self.assertEqual((b2c["price_excl"], b2c["vat_amount"], b2c["amount"]), ("4.13", "0.87", "5.00"))
+        self.assertEqual((b2c["price_excl"], b2c["vat_rate"], b2c["vat_amount"], b2c["amount"]),
+                         ("5.00", "0.00", "0.00", "5.00"))
+        self.assertTrue(invoices.is_exempt(b2c))
+        text = _pdf_text(invoices.render_pdf(b2c))
+        self.assertIn(invoices.EXEMPTION_NOTE, text)
+        self.assertIn("Totaal te betalen", text)
+        self.assertNotIn("incl. btw", text)
+        self.assertNotIn("Btw 21%", text)
+
+    def test_invoice_issued_with_vat_before_the_exemption_keeps_its_layout(self):
+        old = dict(self._issue("tr_old"), price_excl="4.13", vat_rate="0.21", vat_amount="0.87")
+        self.assertFalse(invoices.is_exempt(old))
+        text = _pdf_text(invoices.render_pdf(old))
+        self.assertIn("Btw 21%", text)
+        self.assertIn("Totaal incl. btw", text)
+        self.assertNotIn(invoices.EXEMPTION_NOTE, text)
+
+    def test_old_reverse_charge_order(self):
         nl = self._issue("tr_nl", vat="NL123456789B01", reverse=True, amount="7.44")
         self.assertEqual((nl["price_excl"], nl["vat_amount"], nl["amount"], nl["country_code"]), ("7.44", "0.00", "7.44", "NL"))
 

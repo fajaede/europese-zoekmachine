@@ -6,6 +6,8 @@
   (Octopus): they get a PEPPOL-0001 reference here instead of an invoice, so the EU series
   never has a number without an invoice.
 - Exactly one invoice per Mollie payment (UNIQUE mollie_id), also when Mollie repeats the webhook.
+- fajaede uses the Belgian small-enterprise VAT exemption (not VAT-registered, no OSS): new invoices
+  carry no VAT and state EXEMPTION_NOTE. Older invoices with VAT or reverse charge keep their layout.
 """
 from __future__ import annotations
 
@@ -34,7 +36,9 @@ SELLER = {
     "email": "info@fajaede.nl",
     "website": "www.fajaede.eu",
 }
-VAT_RATE = Decimal("0.21")
+VAT_RATE = Decimal("0.21")   # only for invoices issued before the exemption (stored with their VAT)
+# Mandatory on every invoice under the exemption (art. 56bis Belgian VAT Code), wording from the accountant.
+EXEMPTION_NOTE = "Bijzondere vrijstellingsregeling van belastingplichtige kleine ondernemingen"
 TEST_YEAR = 0
 PEPPOL_YEAR = 1
 
@@ -76,12 +80,16 @@ def is_peppol_customer(vat_number: str | None) -> bool:
 
 
 def split_amount(amount: str, reverse_charge: bool) -> tuple[Decimal, Decimal, Decimal, Decimal]:
-    """(price excl. VAT, VAT rate, VAT amount, total) for an amount paid by the customer."""
-    total = Decimal(amount)
-    if reverse_charge:
-        return total, Decimal("0"), Decimal("0.00"), total
-    excl = (total / (Decimal(1) + VAT_RATE)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-    return excl, VAT_RATE, total - excl, total
+    """(price, VAT rate, VAT amount, total) for an amount paid by the customer. Under the small-enterprise
+    exemption no VAT is charged: the whole amount is the price. `reverse_charge` only comes from orders
+    created before the exemption (their amount was already without VAT)."""
+    total = Decimal(amount).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    return total, Decimal("0"), Decimal("0.00"), total
+
+
+def is_exempt(invoice: dict) -> bool:
+    """True for invoices under the exemption (no VAT, no reverse charge)."""
+    return not invoice.get("reverse_charge") and Decimal(str(invoice.get("vat_rate") or "0")) == 0
 
 
 def issue_invoice(
@@ -208,11 +216,13 @@ def render_pdf(invoice: dict) -> bytes:
             pdf.cell(0, 5, _latin1(line), new_x="LMARGIN", new_y="NEXT")
     pdf.ln(6)
 
+    exempt = is_exempt(invoice)
     pdf.set_font("Helvetica", "B", 10)
     pdf.set_fill_color(241, 245, 249)
     pdf.cell(110, 7, "Omschrijving", border=1, fill=True)
     pdf.cell(20, 7, "Aantal", border=1, fill=True, align="C")
-    pdf.cell(44, 7, "Bedrag excl. btw", border=1, fill=True, align="R", new_x="LMARGIN", new_y="NEXT")
+    pdf.cell(44, 7, "Bedrag" if exempt else "Bedrag excl. btw", border=1, fill=True, align="R",
+             new_x="LMARGIN", new_y="NEXT")
     pdf.set_font("Helvetica", "", 10)
     pdf.cell(110, 7, _latin1(invoice["description"]), border=1)
     pdf.cell(20, 7, "1", border=1, align="C")
@@ -221,11 +231,14 @@ def render_pdf(invoice: dict) -> bytes:
 
     reverse = bool(invoice.get("reverse_charge"))
     rate_label = "Btw verlegd (0%)" if reverse else f"Btw {int(Decimal(invoice['vat_rate']) * 100)}%"
-    for label, value, bold in (
-        ("Subtotaal excl. btw", invoice["price_excl"], False),
-        (rate_label, invoice["vat_amount"], False),
-        ("Totaal te betalen" if reverse else "Totaal incl. btw", invoice["amount"], True),
-    ):
+    totals = (
+        (("Totaal te betalen", invoice["amount"], True),) if exempt else (
+            ("Subtotaal excl. btw", invoice["price_excl"], False),
+            (rate_label, invoice["vat_amount"], False),
+            ("Totaal te betalen" if reverse else "Totaal incl. btw", invoice["amount"], True),
+        )
+    )
+    for label, value, bold in totals:
         pdf.set_font("Helvetica", "B" if bold else "", 10)
         pdf.set_x(18 + 86)
         pdf.cell(44, 6, _latin1(label))
@@ -233,6 +246,10 @@ def render_pdf(invoice: dict) -> bytes:
     pdf.ln(6)
 
     pdf.set_font("Helvetica", "", 9)
+    if exempt:
+        pdf.set_font("Helvetica", "B", 9)
+        pdf.multi_cell(0, 5, _latin1(EXEMPTION_NOTE + "."), new_x="LMARGIN", new_y="NEXT")
+        pdf.set_font("Helvetica", "", 9)
     if reverse:
         pdf.multi_cell(0, 5, _latin1(
             "Btw verlegd naar de afnemer (art. 196 Richtlijn 2006/112/EG). De afnemer voldoet de btw."
