@@ -149,8 +149,10 @@ Common Crawl publiceert elke paar maanden een linkkaart van het web. Het rangbes
 ~135 miljoen domeinen) wordt als stroom gelezen; alleen .nl- en .be-domeinen worden bewaard in
 `backend/authority.db` (los van `benchmark.db`, dus de crawler merkt er niets van).
 
-- **Autoriteit (0-100)** = aandeel van de .nl- (of .be-)domeinen met een lagere harmonische
-  centraliteit: "beter dan X% van alle .nl-domeinen". Gelijke waarden krijgen dezelfde score.
+- **Autoriteit (0-100)** = aandeel van de .nl- (of .be-)sites **met links** (harmonische centraliteit
+  > 0) met een lagere centraliteit: "sterker dan X% van de .nl-sites met links". Domeinen zonder
+  enige link krijgen 0; anders zou elke echte site boven 85 uitkomen door alle geparkeerde domeinen.
+  Gelijke waarden krijgen dezelfde score. Na een wijziging van de schaal: `authority rescore`.
 - `/api/benchmark/competitors` geeft `your_authority` en per concurrent `authority` (null zonder import).
 
 ```bash

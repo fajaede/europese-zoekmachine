@@ -5,8 +5,10 @@ Common Crawl publishes a domain-level link graph every few months, with a ranks 
 via links). We stream that file (~2.4 GB gzip, never stored on disk), keep only .nl and .be
 domains, and store per domain:
 
-  authority = share of the same country's domains with a lower harmonic centrality (0-100),
-              i.e. "beter dan X% van alle .nl-domeinen"; equal values share the same score.
+  authority = share of the same extension's LINKED domains (harmonic centrality > 0, i.e. at least
+              one other site links to them) with a lower centrality (0-100): "sterker dan X% van de
+              .nl-sites met links". Domains without any links score 0 (most parked/unused domains,
+              which would otherwise push every real site above 85). Equal values share a score.
 
 Stored in a separate SQLite file (authority.db) so the import never locks the crawler's database;
 a new import is written to a fresh table and swapped in at the end, so readers never see half data.
@@ -14,6 +16,7 @@ a new import is written to a fresh table and swapped in at the end, so readers n
 Command line (on the server):
   docker exec fajaede-backend python -m backend.benchmark.authority import          # latest release
   docker exec fajaede-backend python -m backend.benchmark.authority status
+  docker exec fajaede-backend python -m backend.benchmark.authority rescore         # new scoring, no download
   docker exec fajaede-backend python -m backend.benchmark.authority seed 40000      # add top domains to the benchmark
 """
 
@@ -242,23 +245,12 @@ def import_ranks(lines: Iterable[str], release: str, path: str | None = None,
                              " pr_pos, pr_val, n_hosts) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", batch)
         if not header_checked or not any(counts.values()):
             raise ValueError("No .nl/.be domains found: download incomplete or format changed")
-        # score = share of the TLD's domains with a strictly lower centrality (a tie group of n domains
-        # starting at local_rank r has total - (r - 1) - n domains below it)
-        conn.execute("CREATE TEMP TABLE ties AS SELECT tld, local_rank, COUNT(*) AS n FROM authority_new"
-                     " GROUP BY tld, local_rank")
-        conn.execute("CREATE INDEX temp.ties_key ON ties(tld, local_rank)")
-        for tld, total in counts.items():
-            if total:
-                conn.execute(
-                    "UPDATE authority_new SET score = (SELECT CAST(ROUND(100.0 * (? - (t.local_rank - 1) - t.n) / ?)"
-                    " AS INTEGER) FROM ties t WHERE t.tld = authority_new.tld AND t.local_rank = authority_new.local_rank)"
-                    " WHERE tld = ?", (total, total, tld))
-        conn.execute("DROP TABLE temp.ties")
+        linked = score_table(conn, "authority_new")
         conn.execute("DROP TABLE IF EXISTS authority")
         conn.execute("ALTER TABLE authority_new RENAME TO authority")
         conn.execute("CREATE INDEX IF NOT EXISTS authority_rank ON authority(tld, local_rank)")
         summary = {"release": release, "imported_at": _now(), "lines_read": read, "domains": counts,
-                   "seconds": round(time.monotonic() - started)}
+                   "linked": linked, "seconds": round(time.monotonic() - started)}
         _set_meta(conn, import_running=False, last_import=summary, import_lines=read)
     return summary
 
@@ -290,6 +282,42 @@ def release_import(path: str | None = None) -> None:
         conn.execute("DELETE FROM meta WHERE key = 'import_lock'")
 
 
+def score_table(conn: sqlite3.Connection, table: str = "authority") -> dict[str, int]:
+    """(Re)compute `score` for every row of `table`; returns the number of linked domains per TLD.
+    Rows are ranked per TLD by harmonic centrality (local_rank, ties share the rank of their first
+    domain), so linked domains (hc_val > 0) occupy ranks 1..linked. A tie group of n linked domains
+    starting at rank r has linked - (r - 1) - n linked domains below it."""
+    assert table in ("authority", "authority_new")
+    linked = {tld: n for tld, n in conn.execute(
+        f"SELECT tld, COUNT(*) FROM {table} WHERE hc_val > 0 GROUP BY tld")}
+    conn.execute("DROP TABLE IF EXISTS temp.ties")
+    conn.execute(f"CREATE TEMP TABLE ties AS SELECT tld, local_rank, COUNT(*) AS n FROM {table}"
+                 " WHERE hc_val > 0 GROUP BY tld, local_rank")
+    conn.execute("CREATE INDEX temp.ties_key ON ties(tld, local_rank)")
+    conn.execute(f"UPDATE {table} SET score = 0 WHERE hc_val <= 0")
+    for tld, total in linked.items():
+        conn.execute(
+            f"UPDATE {table} SET score = (SELECT CAST(ROUND(100.0 * (? - (t.local_rank - 1) - t.n) / ?) AS INTEGER)"
+            f" FROM ties t WHERE t.tld = {table}.tld AND t.local_rank = {table}.local_rank)"
+            " WHERE tld = ? AND hc_val > 0", (total, total, tld))
+    conn.execute("DROP TABLE temp.ties")
+    return linked
+
+
+def rescore(path: str | None = None) -> dict[str, int]:
+    """Apply the current scoring to the imported data without downloading again."""
+    claim_import("rescore", path)
+    try:
+        with connect(path) as conn:
+            linked = score_table(conn, "authority")
+            info = meta(conn).get("last_import") or {}
+            info["linked"] = linked
+            _set_meta(conn, last_import=info)
+        return linked
+    finally:
+        release_import(path)
+
+
 def run_import(release: str | None = None, path: str | None = None) -> dict[str, Any]:
     claim_import("authority", path)
     try:
@@ -311,12 +339,16 @@ def lookup(domains: Iterable[str], path: str | None = None) -> dict[str, dict[st
     try:
         with connect(path) as conn:
             marks = ",".join("?" * len(wanted))
-            rows = conn.execute(f"SELECT domain, score, local_rank, tld FROM authority WHERE domain IN ({marks})",
+            rows = conn.execute(f"SELECT domain, score, local_rank, tld, hc_val FROM authority WHERE domain IN ({marks})",
                                 sorted(wanted)).fetchall()
-            totals = (meta(conn).get("last_import") or {}).get("domains", {})
+            info = meta(conn).get("last_import") or {}
+            totals = info.get("linked") or info.get("domains", {})
     except sqlite3.OperationalError:
         return {}
-    return {row["domain"]: {"score": row["score"], "rank": row["local_rank"], "of": totals.get(row["tld"])}
+    # rank "X van Y" only for linked domains: Y counts linked domains, unlinked ones have no place
+    return {row["domain"]: {"score": row["score"],
+                            "rank": row["local_rank"] if row["hc_val"] > 0 else None,
+                            "of": totals.get(row["tld"]) if row["hc_val"] > 0 else None}
             for row in rows}
 
 
@@ -349,6 +381,8 @@ def _main(argv: list[str]) -> int:
             info = meta(conn)
             info["rows"] = conn.execute("SELECT COUNT(*) FROM authority").fetchone()[0]
         print(json.dumps(info, indent=2))
+    elif command == "rescore":
+        print(json.dumps({"linked": rescore()}))
     elif command == "seed":
         from backend.benchmark import store
         limit = int(argv[2]) if len(argv) > 2 else 10_000

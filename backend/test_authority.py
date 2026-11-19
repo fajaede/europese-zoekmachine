@@ -47,6 +47,31 @@ class AuthorityTests(unittest.TestCase):
         self.assertEqual(found["groot.nl"]["of"], 4)
         self.assertNotIn("onbekend.nl", found)
 
+    def test_domains_without_links_score_zero_and_do_not_count(self):
+        # 3 linked .nl domains and 5 without any links (harmonic centrality 0)
+        lines = [HEADER, line(1, 9.0, "nl.sterk"), line(2, 5.0, "nl.middel"), line(3, 1.0, "nl.zwak")]
+        lines += [line(4 + i, 0.0, f"nl.leeg{i}") for i in range(5)]
+        summary = authority.import_ranks(lines, "r", self.path)
+        self.assertEqual(summary["linked"], {"nl": 3})
+        found = authority.lookup(["sterk.nl", "middel.nl", "zwak.nl", "leeg0.nl"], self.path)
+        self.assertEqual(found["sterk.nl"]["score"], 67)        # 2 of 3 linked domains below it
+        self.assertEqual(found["middel.nl"]["score"], 33)
+        self.assertEqual(found["zwak.nl"]["score"], 0)
+        self.assertEqual((found["sterk.nl"]["rank"], found["sterk.nl"]["of"]), (1, 3))
+        self.assertEqual(found["leeg0.nl"], {"score": 0, "rank": None, "of": None})
+
+    def test_rescore_applies_new_scoring_without_download(self):
+        lines = [HEADER, line(1, 9.0, "nl.a"), line(2, 5.0, "nl.b"), line(3, 0.0, "nl.c"), line(4, 0.0, "nl.d")]
+        authority.import_ranks(lines, "r", self.path)
+        with authority.connect(self.path) as conn:      # simulate the old scoring (all domains counted)
+            conn.execute("UPDATE authority SET score = 99")
+        self.assertEqual(authority.rescore(self.path), {"nl": 2})
+        found = authority.lookup(["a.nl", "b.nl", "c.nl"], self.path)
+        self.assertEqual([found[d]["score"] for d in ("a.nl", "b.nl", "c.nl")], [50, 0, 0])
+        with authority.connect(self.path) as conn:
+            self.assertEqual(authority.meta(conn)["last_import"]["linked"], {"nl": 2})
+            self.assertNotIn("import_lock", authority.meta(conn))
+
     def test_reimport_replaces_and_records_meta(self):
         authority.import_ranks([HEADER, line(1, 2.0, "nl.oud")], "r1", self.path)
         authority.import_ranks([HEADER, line(1, 2.0, "nl.nieuw")], "r2", self.path)
