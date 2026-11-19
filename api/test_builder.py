@@ -22,6 +22,9 @@ from api.disposable_domains import is_disposable_email
 from api.routes import builder
 from api.routes.website_generator import (
     ALLOWED_PHOTO_IDS,
+    MODERN_ACCENTS,
+    MODERN_PROMPT,
+    SYSTEM_PROMPT,
     WebsiteGeneratorService,
     _photo_category,
     _restrict_images,
@@ -529,6 +532,70 @@ class BuilderTests(unittest.TestCase):
         self.assertIn("<h1>Hallo</h1>", result["html"])
         self.assertNotIn("<script", result["html"])
         self.assertEqual(result["site_brief"]["keywords"], ["bakker"])
+
+    def _generate_with(self, payload, html):
+        seen = {}
+
+        class FakeCompletions:
+            async def create(self, **kwargs):
+                seen["system"] = kwargs["messages"][0]["content"]
+                content = json.dumps({"html": html, "site_brief": {"keywords": []}})
+                return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=content))])
+
+        client = SimpleNamespace(chat=SimpleNamespace(completions=FakeCompletions()))
+        result = asyncio.run(WebsiteGeneratorService().generate_website(payload, client))
+        return result["html"], seen["system"]
+
+    def test_modern_design_uses_fixed_stylesheet_and_sector_accent(self):
+        model_html = (
+            '<!DOCTYPE html><html lang="nl"><head><title>x</title><style>body{color:red}</style></head>'
+            '<body><section class="hero" style="background:red"><h1>Hallo</h1></section></body></html>'
+        )
+        html, system = self._generate_with(
+            {"site_type": "restaurant", "industry": "Horeca", "design": "modern", "style": "",
+             "description": "Een gezellig eetcafe in Utrecht."},
+            model_html,
+        )
+        self.assertEqual(system, MODERN_PROMPT)
+        self.assertNotIn("color:red", html)                       # model CSS removed
+        self.assertNotIn('style="background:red"', html)          # style attributes removed
+        self.assertIn("Modern donker", html)                      # fixed stylesheet injected
+        self.assertIn(f"--accent:{MODERN_ACCENTS['food'][0]}", html)
+        self.assertLess(html.index("Modern donker"), html.index("</head>"))
+        self.assertIn('<section class="hero"><h1>Hallo</h1>', html)
+
+    def test_light_design_is_unchanged_and_default(self):
+        html, system = self._generate_with(
+            {"site_type": "general_business", "industry": "Bakker", "style": "warm",
+             "description": "Een lokale ambachtelijke bakkerij."},
+            "<html><head><style>body{color:#123}</style></head><body><h1>Hoi</h1></body></html>",
+        )
+        self.assertEqual(system, SYSTEM_PROMPT)
+        self.assertIn("color:#123", html)
+        self.assertNotIn("Modern donker", html)
+
+    def test_modern_style_added_when_model_forgets_head(self):
+        html, _ = self._generate_with(
+            {"site_type": "portfolio", "industry": "Design", "design": "modern",
+             "description": "Een ontwerpstudio in Groningen."},
+            "<html lang=\"nl\"><body><h1>Studio</h1></body></html>",
+        )
+        self.assertIn("<head><style>", html)
+        self.assertIn(f"--accent:{MODERN_ACCENTS['creative'][0]}", html)
+
+    def test_website_request_design_choice(self):
+        base = {"industry": "Bakker", "description": "Een lokale ambachtelijke bakkerij."}
+        self.assertEqual(builder.WebsiteRequest(**base).design, "licht")
+        self.assertEqual(builder.WebsiteRequest(**base).style, "")
+        self.assertEqual(builder.WebsiteRequest(**base, design="modern").design, "modern")
+        with self.assertRaises(ValueError):
+            builder.WebsiteRequest(**base, design="neon")
+
+    def test_modern_prompt_keeps_content_rules_and_drops_css_rules(self):
+        self.assertIn("Schrijf GEEN CSS", MODERN_PROMPT)
+        self.assertIn("VEILIGHEID", MODERN_PROMPT)
+        self.assertIn("site_brief", MODERN_PROMPT)
+        self.assertNotIn("300 regels CSS", MODERN_PROMPT)
 
     def test_json_ld_is_kept_and_unknown_images_are_replaced(self):
         html = (

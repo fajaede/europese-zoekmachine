@@ -3,6 +3,7 @@
 import json
 import os
 import re
+from pathlib import Path
 from typing import Any
 
 import openai
@@ -154,6 +155,119 @@ UITVOER
   "site_brief" (object met target_audience, keywords (array van max. 8) en core_value)."""
 
 
+# --- Stijl "Modern donker" (web3) --------------------------------------------------------
+# A fixed, hand-made stylesheet (api/builder_styles/modern.css): the model writes only HTML
+# with its classes, so every page has the same quality; the accent follows the sector.
+DESIGNS = ("licht", "modern")
+MODERN_CSS = (Path(__file__).resolve().parent.parent / "builder_styles" / "modern.css").read_text(encoding="utf-8")
+# White button text on --accent >= 4.5:1; both accents >= 3:1 on the dark background (large text).
+MODERN_ACCENTS = {
+    "business": ("#6a4cf5", "#22c3ee"),
+    "creative": ("#6a4cf5", "#22c3ee"),
+    "food": ("#c2410c", "#fbbf24"),
+    "legal": ("#2f5bd3", "#7dd3fc"),
+    "medical": ("#0f766e", "#5eead4"),
+    "shop": ("#be185d", "#f9a8d4"),
+}
+
+_SHARED_RULES = SYSTEM_PROMPT[SYSTEM_PROMPT.index("INHOUD\n"):].replace(
+    "- Een uitgebreide, verzorgde stylesheet (knoppen met hover/focus, kaarten, grid-lay-outs,\n"
+    "  responsive breakpoints): reken op ruim 300 regels CSS.\n",
+    "",
+)
+
+MODERN_PROMPT = """Je bent een senior webdesigner en front-end developer. Je bouwt een complete,
+professionele, Nederlandstalige website in één HTML-bestand in de stijl "Modern donker":
+donker, strak en premium, zoals de beste tech- en designbureaus.
+
+TECHNIEK
+- Eén document: <!DOCTYPE html>, <html lang="nl">, een <head> met charset, viewport, title,
+  description, Open Graph en JSON-LD, en een <body>.
+- Schrijf GEEN CSS: geen <style>-blok en geen style-attributen. De vormgeving komt uit een vaste
+  stylesheet die automatisch wordt toegevoegd. Gebruik uitsluitend de klassen hieronder.
+- Geen JavaScript (behalve één <script type="application/ld+json">), geen externe bestanden,
+  geen iframes, geen tracking.
+- Elke "pagina" is een sectie met een id (bijv. #diensten, #menu, #over-ons, #contact) en de
+  navigatie linkt daarnaar met ankers.
+- Toegankelijk: één <h1>, logische koppen, alt-teksten, een label bij elk formulierveld,
+  aria-label op de navigatie.
+- Foto's: met width en height, loading="lazy" (behalve de hero) en decoding="async".
+
+BOUWBLOKKEN (in deze volgorde; laat weg wat niet past bij de branche)
+1. Infobalk: <div class="topbar"><div class="wrap"> adres, telefoon (tel:-link), openingstijden,
+   routelink </div></div>
+2. Navigatie: <header class="nav"><div class="wrap"><a class="logo" href="#home"><span
+   class="logo-mark" aria-hidden="true"></span>Bedrijfsnaam</a><nav aria-label="Hoofdmenu"><ul>
+   <li><a href="#sectie">Naam</a></li>…</ul></nav><a class="btn btn-primary" href="#contact">Actie</a>
+   </div></header>
+3. <main id="home"> met eerst de hero: <section class="hero"><div class="wrap"><div class="hero-copy">
+   <span class="eyebrow">Branche · Plaats</span><h1>Kop met <span class="grad">accentwoord</span></h1>
+   <p class="lead">…</p><div class="hero-actions"><a class="btn btn-primary" href="…">…</a>
+   <a class="btn btn-ghost" href="…">…</a></div><div class="hero-proof"><div><strong>Kort feit</strong>
+   toelichting</div> (3x)</div></div><div class="frame"><img …hero-foto…><div class="float float-1">
+   <span class="dot-ok" aria-hidden="true"></span><div><b>…</b> …</div></div><div class="float float-2">
+   <div><b>…</b> …</div></div></div></div></section>
+4. Strook: <div class="marquee" aria-label="…"><div class="marquee-track"><span>…</span> (6 tot 8
+   korte termen: specialiteiten, producten of diensten), daarna dezelfde spans nog een keer met
+   aria-hidden="true"</div></div>
+5. Aanbod/diensten: <section class="section" id="…"><div class="wrap"><div class="section-head">
+   <span class="eyebrow">…</span><h2>… <span class="grad">…</span></h2><p class="lead">…</p></div>
+   <div class="bento"> precies 1x <article class="card wide reveal"><div class="icon" aria-hidden="true">
+   <svg viewBox="0 0 24 24">…</svg></div><h3>…</h3><p>…</p><ul class="tags"><li>…</li></ul><img …></article>
+   en 4x <article class="card reveal"> met icon, h3 en p </article></div>
+   Iconen: eenvoudige lijn-SVG's met <path>, <circle> of <rect>, zonder fill- of stroke-attributen.
+6. Cijfers (direct onder het aanbod): <div class="stats"><div class="stat reveal"><b class="grad">…</b>
+   <span>…</span></div> (4x)</div>
+7. Werkwijze of "zo werkt het": <ol class="steps"><li class="reveal"><h3>…</h3><p>…</p></li> (4x)</ol>
+8. Menukaart of prijslijst (horeca altijd): <div class="menu"><div class="menu-cat reveal"><h3>Categorie
+   </h3><div class="menu-item"><div class="menu-row"><span>Naam</span><span class="price">€ 0,00</span>
+   </div><p>Beschrijving</p><div class="labels"><span class="label">V</span></div><p class="allergens">
+   Bevat: …</p></div>…</div>…</div><p class="legend">V = vegetarisch · VG = veganistisch · …</p>
+9. Galerij/projecten/sfeer: <div class="gallery"><figure class="shot reveal"><img …><figcaption><b>…</b>
+   <span>…</span></figcaption></figure> (3x)</div>
+10. Pakketten (als dat past): <div class="pricing"><article class="card price reveal"><h3>…</h3>
+   <div class="amount">€… <small>…</small></div><ul><li>…</li></ul><a class="btn btn-ghost" href="#contact">…</a>
+   </article>; de middelste krijgt class="card price featured reveal", een <span class="badge">Populair</span>
+   en een btn-primary</div><p class="note">…</p>
+11. Over ons: <section class="section" id="over-ons"><div class="wrap split"><img class="reveal" …>
+   <div class="reveal"><span class="eyebrow">…</span><h2>…</h2><p>…</p><p>…</p><a class="btn btn-ghost"
+   href="#contact">…</a></div></div></section>
+12. Vragen: <div class="faq"><details><summary>Vraag</summary><p>Antwoord</p></details> (4x)</div>
+13. Contact: <div class="contact"><div class="card"><form method="post" action="#"><div class="field">
+   <label for="x">…</label><input id="x" name="x" …></div>…<button class="btn btn-primary" type="submit">…
+   </button><p class="form-note">…</p></form></div><aside class="card"><h3>…</h3><ul class="info-list">
+   <li><span>Adres</span>…</li>…</ul><table aria-label="Openingstijden"><tr><td>Dag</td><td>Tijd</td></tr>…
+   </table><a class="btn btn-ghost" href="https://www.google.com/maps/search/?api=1&query=…">…</a></aside></div>
+14. Afsluiter: <div class="cta reveal"><h2>…</h2><p class="lead">…</p><a class="btn btn-primary" href="#contact">
+   …</a></div> en sluit </main>
+15. Footer: <footer><div class="wrap"><div class="footer-grid"><div>logo en korte tekst</div><div><h3>Menu</h3>
+   <ul>…</ul></div><div><h3>Contact</h3><ul>…</ul></div><div><h3>Openingstijden</h3><ul>…</ul></div></div>
+   <div class="legal"><span>© …</span><span>…</span></div></div></footer>
+- Elke sectie: <section class="section" id="…"><div class="wrap"><div class="section-head">…</div> inhoud
+  </div></section>; voeg "center" toe aan section-head voor gecentreerde koppen (pakketten, vragen).
+- Zet per kop hooguit één woord of kort zinsdeel in <span class="grad">.
+- Gebruik minimaal 4 verschillende foto's (hero, brede kaart, galerij, over ons), uitsluitend uit de
+  aangeleverde fotolijst, letterlijk overgenomen.
+- Cijfers in badges, hero-proof en stats die de klant niet geeft, markeer je met * en een regel
+  "* Voorbeeldcijfers – vervang door uw eigen resultaten" in de footer.
+
+""" + _SHARED_RULES
+
+_STYLE_BLOCKS = re.compile(r"<style\b[^>]*>.*?</style\s*>", re.IGNORECASE | re.DOTALL)
+_STYLE_ATTRS = re.compile(r"""\s+style\s*=\s*(?:"[^"]*"|'[^']*')""", re.IGNORECASE)
+
+
+def _apply_modern_style(html_document: str, category: str) -> str:
+    """Replace any CSS the model wrote by the fixed stylesheet with the sector's accent colours."""
+    html_document = _STYLE_ATTRS.sub("", _STYLE_BLOCKS.sub("", html_document))
+    accent, accent_2 = MODERN_ACCENTS.get(category, MODERN_ACCENTS["business"])
+    style = f"<style>{MODERN_CSS}\n:root{{--accent:{accent};--accent-2:{accent_2}}}</style>"
+    if re.search(r"</head\s*>", html_document, re.IGNORECASE):
+        return re.sub(r"</head\s*>", lambda _m: f"{style}</head>", html_document, count=1, flags=re.IGNORECASE)
+    return re.sub(r"<html\b[^>]*>", lambda m: f"{m.group(0)}<head>{style}</head>", html_document,
+                  count=1, flags=re.IGNORECASE)
+
+
 def _photo_category(payload: dict[str, str]) -> str:
     category = SITE_TYPE_CATEGORY.get(payload.get("site_type", ""))
     if category:
@@ -270,6 +384,7 @@ class WebsiteGeneratorService:
     ) -> dict[str, Any]:
         """Generate one static site with bounded model output."""
         category = _photo_category(payload)
+        design = payload.get("design") if payload.get("design") in DESIGNS else "licht"
         site_details = json.dumps(payload, ensure_ascii=False)
         model = os.getenv("BUILDER_OPENAI_MODEL", DEFAULT_MODEL).strip() or DEFAULT_MODEL
         try:
@@ -283,7 +398,7 @@ class WebsiteGeneratorService:
             max_tokens=max_tokens,
             response_format={"type": "json_object"},
             messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "system", "content": MODERN_PROMPT if design == "modern" else SYSTEM_PROMPT},
                 {
                     "role": "user",
                     "content": (
@@ -311,9 +426,10 @@ class WebsiteGeneratorService:
         ):
             raise RuntimeError("The website model returned an invalid page.")
 
-        html_document = _add_layout_guards(
-            _restrict_images(_strip_active_content(html_document), category)
-        )
+        html_document = _restrict_images(_strip_active_content(html_document), category)
+        if design == "modern":
+            html_document = _apply_modern_style(html_document, category)
+        html_document = _add_layout_guards(html_document)
         site_brief["keywords"] = [
             item for item in site_brief.get("keywords", []) if isinstance(item, str)
         ][:8]

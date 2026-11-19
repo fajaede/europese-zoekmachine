@@ -69,7 +69,8 @@ class WebsiteRequest(BaseModel):
         "medical",
     ] = "general_business"
     industry: str = Field(min_length=2, max_length=100)
-    style: str = Field(min_length=2, max_length=100)
+    design: Literal["licht", "modern"] = "licht"   # "modern" = fixed dark (web3) stylesheet
+    style: str = Field(default="", max_length=100)  # extra style wishes, free text
     description: str = Field(min_length=10, max_length=1500)
 
 

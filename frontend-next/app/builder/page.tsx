@@ -66,9 +66,28 @@ type BuilderAccount = {
   checkout_message: string;
 };
 
+type Design = 'licht' | 'modern';
+
+const DESIGN_OPTIONS: { value: Design; label: string; hint: string; preview: string }[] = [
+  {
+    value: 'licht',
+    label: 'Licht en rustig',
+    hint: 'Veel witruimte, past bij elke branche.',
+    preview: 'linear-gradient(135deg, #ffffff 0%, #f1f5f9 55%, #fed7aa 100%)',
+  },
+  {
+    value: 'modern',
+    label: 'Modern donker',
+    hint: 'Donker met gloed en glas, ideaal voor tech, creatief en horeca.',
+    preview:
+      'radial-gradient(60% 90% at 20% 10%, rgba(106,76,245,.75), transparent 70%), radial-gradient(50% 80% at 90% 20%, rgba(34,195,238,.55), transparent 70%), #07080c',
+  },
+];
+
 export default function BuilderPage() {
   const [siteType, setSiteType] = useState('general_business');
   const [industry, setIndustry] = useState('');
+  const [design, setDesign] = useState<Design>('licht');
   const [style, setStyle] = useState('');
   const [description, setDescription] = useState('');
   const [email, setEmail] = useState('');
@@ -271,6 +290,7 @@ export default function BuilderPage() {
         body: JSON.stringify({
           site_type: siteType,
           industry,
+          design,
           style,
           description,
         }),
@@ -551,22 +571,45 @@ export default function BuilderPage() {
                 />
               </div>
 
-              {/* Style */}
-              <div className="flex flex-col">
-                <label htmlFor="style" className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">
+              {/* Design */}
+              <fieldset className="flex flex-col">
+                <legend className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">
                   Design Stijl
-                </label>
+                </legend>
+                <div className="grid grid-cols-2 gap-3">
+                  {DESIGN_OPTIONS.map((option) => (
+                    <label
+                      key={option.value}
+                      className={`flex flex-col gap-2 p-2 rounded-xl border cursor-pointer transition-all focus-within:ring-2 focus-within:ring-orange-500/30 ${
+                        design === option.value ? 'border-orange-500 bg-orange-50/60' : 'border-slate-200 bg-white hover:border-slate-300'
+                      }`}
+                    >
+                      <input
+                        type="radio"
+                        name="design"
+                        value={option.value}
+                        checked={design === option.value}
+                        onChange={() => setDesign(option.value)}
+                        className="sr-only"
+                      />
+                      <span aria-hidden="true" className="h-14 rounded-lg" style={{ background: option.preview }} />
+                      <span className="text-sm font-bold text-slate-800">{option.label}</span>
+                      <span className="text-xs text-slate-500 leading-snug">{option.hint}</span>
+                    </label>
+                  ))}
+                </div>
+                <label htmlFor="style" className="sr-only">Extra stijlwensen</label>
                 <input
                   type="text"
                   id="style"
                   name="style"
                   value={style}
                   onChange={(e) => setStyle(e.target.value)}
-                  placeholder="Bijv. modern, minimalistisch, warm, luxe"
-                  className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500 text-slate-700 text-sm transition-all"
-                  required
+                  maxLength={100}
+                  placeholder="Extra wensen (optioneel), bijv. warm, luxe, speels"
+                  className="mt-3 w-full px-4 py-3 bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500 text-slate-700 text-sm transition-all"
                 />
-              </div>
+              </fieldset>
 
               {/* Description */}
               <div className="flex flex-col">
