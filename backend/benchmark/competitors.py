@@ -47,6 +47,22 @@ def _entry(row: Any, yours: dict[str, float | None]) -> dict[str, Any]:
             "ahead_on": _strengths(scores, yours)}
 
 
+def distribution(group: list[Any]) -> dict[str, list[int]] | None:
+    """Number of sites per score 0-100 for overall and each metric (no domain names), so the
+    dashboard can draw the group and simulate "what if" locally. None for groups too small
+    to show a meaningful spread (rules.MIN_COHORT_SIZE, as for percentiles)."""
+    if len(group) < rules.MIN_COHORT_SIZE:
+        return None
+    counts = {name: [0] * 101 for name in ("overall", *METRICS)}
+    for row in group:
+        scores = _row_scores(row)
+        values = {"overall": overall(scores), **scores}
+        for name, value in values.items():
+            if value is not None:
+                counts[name][max(0, min(100, round(value)))] += 1
+    return counts
+
+
 def find_competitors(rows: list[Any], domain: str, scores: dict[str, float], category: str | None = None,
                      limit: int = 3) -> dict[str, Any]:
     """Cohort = the most specific of country+category, category, country, all with at least MIN_GROUP
@@ -68,7 +84,7 @@ def find_competitors(rows: list[Any], domain: str, scores: dict[str, float], cat
             break
     else:
         return {"domain": domain, "cohort": None, "your_overall": your_overall, "ahead": [], "leader": None,
-                "behind": None, "group_size": 0}
+                "behind": None, "group_size": 0, "distribution": None}
 
     ranked = sorted(group, key=lambda row: (overall(_row_scores(row)), row["root_domain"]))
     if your_overall is None:
@@ -90,4 +106,5 @@ def find_competitors(rows: list[Any], domain: str, scores: dict[str, float], cat
         "leader": None if any(e["domain"] == leader["domain"] for e in ahead) else leader,
         "behind": _entry(behind_row, yours) if behind_row is not None else None,
         "you_lead": your_overall is not None and not ahead_rows,
+        "distribution": distribution(group),
     }

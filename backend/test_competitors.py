@@ -69,6 +69,17 @@ class CompetitorTests(unittest.TestCase):
         self.assertEqual(result["cohort"], "*:*")    # *:saas (1) and BE:* (2) are too small as well -> all sites
         self.assertEqual(find_competitors([], "x.nl", {"psa": 50})["cohort"], None)
 
+    def test_distribution_counts_scores_without_names(self):
+        self.assertIsNone(find_competitors(self.rows, "nieuw.nl", {"psa": 50, "seo": 50})["distribution"])  # 11 < 30
+        many = [row(f"s{i}.nl", psa=i * 2, seo=50, geo=0, ai=50) for i in range(40)]
+        dist = find_competitors(many, "nieuw.nl", {"psa": 50, "seo": 50}, "mkb")["distribution"]
+        self.assertEqual(set(dist), {"overall", "psa", "seo", "geo", "ai"})
+        self.assertTrue(all(len(counts) == 101 for counts in dist.values()))
+        self.assertEqual(sum(dist["overall"]), 40)
+        self.assertEqual(dist["seo"][50], 40)
+        self.assertEqual(dist["psa"][78], 1)
+        self.assertEqual(dist["overall"][overall({"psa": 78, "seo": 50, "geo": 0, "ai": 50})], 1)
+
 
 if __name__ == "__main__":
     unittest.main()

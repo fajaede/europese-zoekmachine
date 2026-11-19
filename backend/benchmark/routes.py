@@ -9,6 +9,7 @@ Admin (X-Admin-Key):
 psa.fajaede.nl (X-Benchmark-Key = BENCHMARK_API_KEY):
   GET  /api/benchmark/compare?domain=voorbeeld.nl&psa=82&seo=67&geo=40&ai=50
   GET  /api/benchmark/competitors?domain=voorbeeld.nl&psa=82&seo=67&geo=40&ai=50&limit=3
+       (+ "distribution": sites per score 0-100 for overall/psa/seo/geo/ai, groups of 30+)
 """
 
 from __future__ import annotations
