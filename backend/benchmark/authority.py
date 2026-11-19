@@ -5,10 +5,12 @@ Common Crawl publishes a domain-level link graph every few months, with a ranks 
 via links). We stream that file (~2.4 GB gzip, never stored on disk), keep only .nl and .be
 domains, and store per domain:
 
-  authority = share of the same extension's LINKED domains (harmonic centrality > 0, i.e. at least
-              one other site links to them) with a lower centrality (0-100): "sterker dan X% van de
-              .nl-sites met links". Domains without any links score 0 (most parked/unused domains,
-              which would otherwise push every real site above 85). Equal values share a score.
+  authority = 0-100 on a logarithmic scale of the domain's rank among the same extension's LINKED
+              domains (harmonic centrality > 0): 100 = the strongest .nl (or .be) site, 0 = the
+              weakest; every step up is harder, like Moz Domain Authority / Ahrefs Domain Rating.
+              A percentile was tried first, but most linked domains have one or two weak links, so
+              any real business site landed above 85. Domains without links score 0 and get no rank.
+              Equal centrality values share a rank and a score.
 
 Stored in a separate SQLite file (authority.db) so the import never locks the crawler's database;
 a new import is written to a fresh table and swapped in at the end, so readers never see half data.
@@ -25,6 +27,7 @@ from __future__ import annotations
 import gzip
 import io
 import json
+import math
 import os
 import sqlite3
 import sys
@@ -282,25 +285,32 @@ def release_import(path: str | None = None) -> None:
         conn.execute("DELETE FROM meta WHERE key = 'import_lock'")
 
 
+def log_score(rank: int, linked: int) -> int:
+    """100 for rank 1, 0 for the last of `linked` domains, logarithmic in between."""
+    if linked <= 1:
+        return 100
+    return max(0, min(100, round(100 * (1 - math.log(rank) / math.log(linked)))))
+
+
 def score_table(conn: sqlite3.Connection, table: str = "authority") -> dict[str, int]:
     """(Re)compute `score` for every row of `table`; returns the number of linked domains per TLD.
     Rows are ranked per TLD by harmonic centrality (local_rank, ties share the rank of their first
-    domain), so linked domains (hc_val > 0) occupy ranks 1..linked. A tie group of n linked domains
-    starting at rank r has linked - (r - 1) - n linked domains below it."""
+    domain), so linked domains (hc_val > 0) occupy ranks 1..linked."""
     assert table in ("authority", "authority_new")
     linked = {tld: n for tld, n in conn.execute(
         f"SELECT tld, COUNT(*) FROM {table} WHERE hc_val > 0 GROUP BY tld")}
-    conn.execute("DROP TABLE IF EXISTS temp.ties")
-    conn.execute(f"CREATE TEMP TABLE ties AS SELECT tld, local_rank, COUNT(*) AS n FROM {table}"
-                 " WHERE hc_val > 0 GROUP BY tld, local_rank")
-    conn.execute("CREATE INDEX temp.ties_key ON ties(tld, local_rank)")
     conn.execute(f"UPDATE {table} SET score = 0 WHERE hc_val <= 0")
+    conn.execute("DROP TABLE IF EXISTS temp.rank_score")
+    conn.execute("CREATE TEMP TABLE rank_score (tld TEXT, local_rank INTEGER, score INTEGER,"
+                 " PRIMARY KEY (tld, local_rank))")
     for tld, total in linked.items():
-        conn.execute(
-            f"UPDATE {table} SET score = (SELECT CAST(ROUND(100.0 * (? - (t.local_rank - 1) - t.n) / ?) AS INTEGER)"
-            f" FROM ties t WHERE t.tld = {table}.tld AND t.local_rank = {table}.local_rank)"
-            " WHERE tld = ? AND hc_val > 0", (total, total, tld))
-    conn.execute("DROP TABLE temp.ties")
+        ranks = [r for (r,) in conn.execute(
+            f"SELECT DISTINCT local_rank FROM {table} WHERE tld = ? AND hc_val > 0", (tld,))]
+        conn.executemany("INSERT INTO rank_score VALUES (?, ?, ?)",
+                         ((tld, r, log_score(r, total)) for r in ranks))
+    conn.execute(f"UPDATE {table} SET score = (SELECT rs.score FROM rank_score rs WHERE rs.tld = {table}.tld"
+                 f" AND rs.local_rank = {table}.local_rank) WHERE hc_val > 0")
+    conn.execute("DROP TABLE temp.rank_score")
     return linked
 
 

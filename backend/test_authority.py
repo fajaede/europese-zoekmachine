@@ -39,13 +39,23 @@ class AuthorityTests(unittest.TestCase):
         self.assertEqual(summary["domains"], {"nl": 4, "be": 2})
         found = authority.lookup(["groot.nl", "www.middel.nl", "klein-a.nl", "klein-b.nl", "sterk.be", "zwak.be",
                                   "onbekend.nl"], self.path)
-        self.assertEqual(found["groot.nl"]["score"], 75)       # 3 of 4 .nl domains below it
+        # 4 linked .nl domains: ranks 1, 2, 3, 3 (tie) -> 100 * (1 - ln(rank) / ln(4))
+        self.assertEqual(found["groot.nl"]["score"], 100)
         self.assertEqual(found["middel.nl"]["score"], 50)
-        self.assertEqual(found["klein-a.nl"]["score"], 0)      # tie: nobody strictly below
-        self.assertEqual(found["klein-a.nl"]["rank"], found["klein-b.nl"]["rank"])
-        self.assertEqual((found["sterk.be"]["score"], found["zwak.be"]["score"]), (50, 0))
+        self.assertEqual(found["klein-a.nl"]["score"], 21)
+        self.assertEqual(found["klein-a.nl"]["rank"], found["klein-b.nl"]["rank"])   # tie shares rank and score
+        self.assertEqual(found["klein-b.nl"]["score"], 21)
+        self.assertEqual((found["sterk.be"]["score"], found["zwak.be"]["score"]), (100, 0))
         self.assertEqual(found["groot.nl"]["of"], 4)
         self.assertNotIn("onbekend.nl", found)
+
+    def test_log_scale(self):
+        n = 1_677_506                                   # linked .nl domains, release aug-oct 2026
+        self.assertEqual(authority.log_score(1, n), 100)
+        self.assertEqual(authority.log_score(n, n), 0)
+        self.assertEqual(authority.log_score(208_113, n), 15)
+        self.assertEqual([authority.log_score(r, n) for r in (10, 100, 1000, 10_000)], [84, 68, 52, 36])
+        self.assertEqual(authority.log_score(1, 1), 100)
 
     def test_domains_without_links_score_zero_and_do_not_count(self):
         # 3 linked .nl domains and 5 without any links (harmonic centrality 0)
@@ -54,8 +64,8 @@ class AuthorityTests(unittest.TestCase):
         summary = authority.import_ranks(lines, "r", self.path)
         self.assertEqual(summary["linked"], {"nl": 3})
         found = authority.lookup(["sterk.nl", "middel.nl", "zwak.nl", "leeg0.nl"], self.path)
-        self.assertEqual(found["sterk.nl"]["score"], 67)        # 2 of 3 linked domains below it
-        self.assertEqual(found["middel.nl"]["score"], 33)
+        self.assertEqual(found["sterk.nl"]["score"], 100)
+        self.assertEqual(found["middel.nl"]["score"], 37)       # 100 * (1 - ln 2 / ln 3)
         self.assertEqual(found["zwak.nl"]["score"], 0)
         self.assertEqual((found["sterk.nl"]["rank"], found["sterk.nl"]["of"]), (1, 3))
         self.assertEqual(found["leeg0.nl"], {"score": 0, "rank": None, "of": None})
@@ -67,7 +77,7 @@ class AuthorityTests(unittest.TestCase):
             conn.execute("UPDATE authority SET score = 99")
         self.assertEqual(authority.rescore(self.path), {"nl": 2})
         found = authority.lookup(["a.nl", "b.nl", "c.nl"], self.path)
-        self.assertEqual([found[d]["score"] for d in ("a.nl", "b.nl", "c.nl")], [50, 0, 0])
+        self.assertEqual([found[d]["score"] for d in ("a.nl", "b.nl", "c.nl")], [100, 0, 0])
         with authority.connect(self.path) as conn:
             self.assertEqual(authority.meta(conn)["last_import"]["linked"], {"nl": 2})
             self.assertNotIn("import_lock", authority.meta(conn))
@@ -105,8 +115,8 @@ class AuthorityTests(unittest.TestCase):
                   "behind": {"domain": "onbekend.nl"}}
         with mock.patch.object(authority, "DB_PATH", self.path):
             add_authority(result)
-        self.assertEqual(result["your_authority"], 33)
-        self.assertEqual(result["ahead"][0]["authority"], 67)
+        self.assertEqual(result["your_authority"], 37)
+        self.assertEqual(result["ahead"][0]["authority"], 100)
         self.assertIsNone(result["behind"]["authority"])
 
     def test_only_one_import_at_a_time_and_stale_lock_expires(self):

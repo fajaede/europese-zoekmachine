@@ -53,7 +53,8 @@ class BacklinkTests(unittest.TestCase):
         self.run_import()
         top = backlinks.lookup("jij.nl", self.path)["top"]
         self.assertEqual(len(top), backlinks.TOP_K)
-        self.assertEqual([t["domain"] for t in top], ["groot.nl", "sterk.nl", "alpha.be", "klein.nl", "beta.be"])
+        # log scale per extension: groot.nl 100, alpha.be 100 (strongest .be), sterk.nl 50, klein.nl 21, beta.be 0
+        self.assertEqual([t["domain"] for t in top], ["groot.nl", "alpha.be", "sterk.nl", "klein.nl", "beta.be"])
         scores = [t["authority"] for t in top]
         self.assertEqual(scores, sorted(scores, reverse=True))
 
@@ -64,7 +65,7 @@ class BacklinkTests(unittest.TestCase):
             self.run_import()
         finally:
             backlinks.TOP_K = original
-        self.assertEqual([t["domain"] for t in backlinks.lookup("jij.nl", self.path)["top"]], ["groot.nl", "sterk.nl"])
+        self.assertEqual([t["domain"] for t in backlinks.lookup("jij.nl", self.path)["top"]], ["groot.nl", "alpha.be"])
 
     def test_requires_matching_authority_import_and_keeps_old_data_on_failure(self):
         self.run_import()
