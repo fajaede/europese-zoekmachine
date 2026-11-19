@@ -8,6 +8,7 @@ Admin (X-Admin-Key):
   GET  /api/benchmark/index-stats
 psa.fajaede.nl (X-Benchmark-Key = BENCHMARK_API_KEY):
   GET  /api/benchmark/compare?domain=voorbeeld.nl&psa=82&seo=67&geo=40&ai=50
+  GET  /api/benchmark/competitors?domain=voorbeeld.nl&psa=82&seo=67&geo=40&ai=50&limit=3
 """
 
 from __future__ import annotations
@@ -21,6 +22,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from backend.benchmark import rules, store, worker
+from backend.benchmark.competitors import find_competitors
 
 router = APIRouter(prefix="/api/benchmark", tags=["benchmark"])
 
@@ -144,6 +146,26 @@ def cohort_label(cohort: str) -> str:
     where = {"NL": "Nederlandse", "BE": "Belgische", "INT": "internationale", "*": ""}.get(country, "")
     what = rules.CATEGORIES[category].label.lower() if category in rules.CATEGORIES else "websites"
     return " ".join(part for part in (where, what if category != "*" else "websites") if part)
+
+
+@router.get("/competitors")
+async def competitors(request: Request, domain: str, category: str | None = None, psa: int | None = None,
+                      seo: int | None = None, geo: int | None = None, ai: int | None = None,
+                      limit: int = 3) -> dict[str, Any]:
+    """Sites in the same cohort that score just above you, the leader, and where they are ahead."""
+    _check_key(request, "BENCHMARK_API_KEY", "X-Benchmark-Key")
+    scores = {k: v for k, v in {"psa": psa, "seo": seo, "geo": geo, "ai": ai}.items() if v is not None}
+    if any(not 0 <= value <= 100 for value in scores.values()) or not 1 <= limit <= 10:
+        raise HTTPException(status_code=422, detail="Scores must be 0-100 and limit 1-10")
+
+    def _rows() -> list[Any]:
+        store.init()
+        with store.connect() as conn:
+            return [dict(row) for row in store.latest_scores(conn)]
+
+    result = find_competitors(await asyncio.to_thread(_rows), rules.root_domain(domain), scores, category, limit)
+    result["cohort_label"] = cohort_label(result["cohort"]) if result["cohort"] else None
+    return result
 
 
 @router.get("/compare")
