@@ -161,3 +161,19 @@ docker exec fajaede-backend python -m backend.benchmark.authority seed 40000    
 
 Een nieuwe import vervangt de vorige pas als hij volledig gelukt is. Herhaal hem bij een nieuwe
 uitgave (zie https://commoncrawl.org/web-graphs).
+
+### Verwijzende domeinen (backlinks)
+
+Uit dezelfde uitgave: het knooppuntenbestand (~0,9 GB) en het linkbestand (~7,6 GB, ~1,8 miljard
+regels), beide als stroom gelezen. Per .nl/.be-domein: het aantal verwijzende domeinen (alle
+extensies), hoeveel daarvan .nl/.be, en de 5 sterkste verwijzende .nl/.be-domeinen. Duurt ongeveer
+20-30 minuten; draai de autoriteit-import eerst (zelfde uitgave). Downloads hervatten automatisch
+na een verbroken verbinding of "SlowDown" van Common Crawl.
+
+```bash
+docker exec -d fajaede-backend python -m backend.benchmark.backlinks import    # op de achtergrond
+docker exec fajaede-backend python -m backend.benchmark.backlinks status       # voortgang
+```
+
+`GET /api/benchmark/backlinks?domain=` (X-Benchmark-Key) geeft autoriteit, verwijzende domeinen en
+de sterkste verwijzers; `/competitors` geeft ook `referring_domains` per site.

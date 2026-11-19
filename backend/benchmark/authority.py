@@ -26,6 +26,7 @@ import os
 import sqlite3
 import sys
 import time
+import urllib.error
 import urllib.request
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -109,11 +110,73 @@ def latest_release() -> str:
         return json.load(response)[0]["id"]
 
 
+class ResumableDownload(io.RawIOBase):
+    """Read-only stream of a large HTTP file that survives dropped connections and Common Crawl's
+    "SlowDown" throttling: on an error it waits (growing pause) and continues with a Range request
+    from the byte where it stopped. Gives up after `max_retries` failures in a row."""
+
+    def __init__(self, url: str, max_retries: int = 12, opener: Any = None, sleep: Any = time.sleep):
+        self.url, self.max_retries = url, max_retries
+        self.opener, self.sleep = opener or urllib.request.urlopen, sleep
+        self.position, self.length, self.response, self.failures = 0, None, None, 0
+
+    def readable(self) -> bool:
+        return True
+
+    def _connect(self) -> None:
+        headers = {"User-Agent": USER_AGENT}
+        if self.position:
+            headers["Range"] = f"bytes={self.position}-"
+        response = self.opener(urllib.request.Request(self.url, headers=headers), timeout=120)
+        status = getattr(response, "status", 200)
+        if self.position and status != 206:
+            response.close()
+            raise OSError(f"server ignored the Range request (HTTP {status})")
+        if "xml" in (response.headers.get("Content-Type") or "").lower():   # S3 error body (e.g. SlowDown)
+            response.close()
+            raise OSError("error document instead of data")
+        if self.length is None:
+            length = response.headers.get("Content-Length")
+            self.length = int(length) if length and length.isdigit() else None
+        self.response = response
+
+    def readinto(self, buffer: Any) -> int:
+        while True:
+            try:
+                if self.response is None:
+                    self._connect()
+                n = self.response.readinto(buffer)
+                if n == 0 and self.length is not None and self.position < self.length:
+                    raise OSError(f"connection closed at byte {self.position} of {self.length}")
+                self.position += n
+                self.failures = 0
+                return n
+            except (OSError, urllib.error.URLError) as error:      # HTTPError (503 SlowDown) is a URLError
+                if self.response is not None:
+                    self.response.close()
+                    self.response = None
+                self.failures += 1
+                if self.failures > self.max_retries:
+                    raise OSError(f"download failed after {self.max_retries} retries: {error}") from error
+                self.sleep(min(300, 5 * 2 ** (self.failures - 1)))
+
+    def close(self) -> None:
+        if self.response is not None:
+            self.response.close()
+            self.response = None
+        super().close()
+
+
+def open_gzip_lines(url: str) -> Iterator[bytes]:
+    """Lines of a remote .gz file, streamed with resume on errors."""
+    raw = ResumableDownload(url)
+    with io.BufferedReader(raw, buffer_size=1 << 20) as buffered, gzip.GzipFile(fileobj=buffered) as unzipped:
+        yield from unzipped
+
+
 def _stream_lines(release: str) -> Iterator[str]:
-    request = urllib.request.Request(RANKS_URL.format(release=release), headers={"User-Agent": USER_AGENT})
-    response = urllib.request.urlopen(request, timeout=120)
-    with response, gzip.GzipFile(fileobj=response) as unzipped:
-        yield from io.TextIOWrapper(unzipped, encoding="utf-8", errors="replace")
+    for line in open_gzip_lines(RANKS_URL.format(release=release)):
+        yield line.decode("utf-8", errors="replace")
 
 
 def import_ranks(lines: Iterable[str], release: str, path: str | None = None,

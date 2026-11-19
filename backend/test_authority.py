@@ -85,5 +85,61 @@ class AuthorityTests(unittest.TestCase):
         self.assertIsNone(result["behind"]["authority"])
 
 
+class FakeResponse:
+    def __init__(self, data, status=200, content_type="application/octet-stream", fail_after=None, length=None):
+        self.data, self.status, self.fail_after = data, status, fail_after
+        self.headers = {"Content-Type": content_type, "Content-Length": str(length if length is not None else len(data))}
+        self.pos = 0
+
+    def readinto(self, buffer):
+        if self.fail_after is not None and self.pos >= self.fail_after:
+            raise ConnectionResetError("dropped")
+        end = len(self.data) if self.fail_after is None else min(len(self.data), self.fail_after)
+        chunk = self.data[self.pos:min(end, self.pos + len(buffer))]
+        buffer[:len(chunk)] = chunk
+        self.pos += len(chunk)
+        return len(chunk)
+
+    def close(self):
+        pass
+
+
+class ResumableDownloadTests(unittest.TestCase):
+    def test_resumes_after_drop_and_slowdown_with_range(self):
+        import gzip as gz
+        import io
+        import urllib.error
+        payload = gz.compress(("".join(f"{i}\tnl.site{i}\n" for i in range(5000))).encode())
+        calls = []
+
+        def opener(request, timeout):
+            calls.append(request.get_header("Range"))
+            if len(calls) == 1:
+                return FakeResponse(payload, fail_after=1000)             # drops after 1000 bytes
+            if len(calls) == 2:
+                raise urllib.error.HTTPError(request.full_url, 503, "SlowDown", {}, None)
+            if len(calls) == 3:
+                return FakeResponse(b"<?xml SlowDown", content_type="application/xml")
+            start = int(request.get_header("Range").split("=")[1].rstrip("-"))
+            return FakeResponse(payload[start:], status=206, length=len(payload) - start)
+
+        pauses = []
+        raw = authority.ResumableDownload("https://example.test/x.gz", opener=opener, sleep=pauses.append)
+        with io.BufferedReader(raw, buffer_size=256) as buffered, gz.GzipFile(fileobj=buffered) as unzipped:
+            lines = unzipped.read().decode().splitlines()
+        self.assertEqual(len(lines), 5000)
+        self.assertEqual(lines[-1], "4999\tnl.site4999")
+        self.assertEqual(calls[0], None)
+        self.assertTrue(all(c == "Bytes=1000-" or c == "bytes=1000-" for c in calls[1:]))
+        self.assertEqual(pauses, [5, 10, 20])
+
+    def test_gives_up_after_max_retries(self):
+        def opener(request, timeout):
+            raise ConnectionRefusedError("down")
+        raw = authority.ResumableDownload("https://example.test/x.gz", max_retries=2, opener=opener, sleep=lambda s: None)
+        with self.assertRaises(OSError):
+            raw.read(10)
+
+
 if __name__ == "__main__":
     unittest.main()

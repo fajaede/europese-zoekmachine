@@ -10,7 +10,9 @@ psa.fajaede.nl (X-Benchmark-Key = BENCHMARK_API_KEY):
   GET  /api/benchmark/compare?domain=voorbeeld.nl&psa=82&seo=67&geo=40&ai=50
   GET  /api/benchmark/competitors?domain=voorbeeld.nl&psa=82&seo=67&geo=40&ai=50&limit=3
        (+ "distribution": sites per score 0-100 for overall/psa/seo/geo/ai, groups of 30+;
-          "your_authority" / entry "authority": Common Crawl authority 0-100, see authority.py)
+          "your_authority" / entry "authority": Common Crawl authority 0-100, see authority.py;
+          "your_referring_domains" / entry "referring_domains": see backlinks.py)
+  GET  /api/benchmark/backlinks?domain=voorbeeld.nl   (authority + referring domains + strongest .nl/.be linkers)
 """
 
 from __future__ import annotations
@@ -23,7 +25,7 @@ from typing import Any, Literal
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from backend.benchmark import authority, rules, store, worker
+from backend.benchmark import authority, backlinks, rules, store, worker
 from backend.benchmark.competitors import find_competitors
 
 router = APIRouter(prefix="/api/benchmark", tags=["benchmark"])
@@ -175,11 +177,47 @@ def add_authority(result: dict[str, Any]) -> None:
     """Common Crawl authority (0-100, share of the country's domains with fewer/weaker links) for
     you and each named competitor; None when unknown or not imported yet."""
     entries = [e for e in (*result.get("ahead", []), result.get("leader"), result.get("behind")) if e]
-    found = authority.lookup([result["domain"], *(e["domain"] for e in entries)])
+    domains = [result["domain"], *(e["domain"] for e in entries)]
+    found = authority.lookup(domains)
+    links = backlinks.counts(domains)
     score = lambda domain: (found.get(domain) or {}).get("score")
     result["your_authority"] = score(result["domain"])
+    result["your_referring_domains"] = links.get(result["domain"])
     for entry in entries:
         entry["authority"] = score(entry["domain"])
+        entry["referring_domains"] = links.get(entry["domain"])
+
+
+@router.get("/backlinks")
+async def backlink_profile(request: Request, domain: str) -> dict[str, Any]:
+    """Authority and referring domains for one domain, from the Common Crawl web graph.
+    Fields are null when the domain is unknown or the import has not run."""
+    _check_key(request, "BENCHMARK_API_KEY", "X-Benchmark-Key")
+    root = rules.root_domain(domain)
+    if not root or "." not in root:
+        raise HTTPException(status_code=422, detail="Invalid domain")
+
+    def _read() -> dict[str, Any]:
+        info: dict[str, Any] = {}
+        try:
+            with authority.connect() as conn:
+                info = authority.meta(conn)
+        except Exception:
+            pass
+        found = authority.lookup([root]).get(root) or {}
+        links = backlinks.lookup(root) or {}
+        return {
+            "domain": root,
+            "authority": found.get("score"),
+            "authority_rank": found.get("rank"),
+            "authority_of": found.get("of"),
+            "referring_domains": links.get("referring_domains", 0 if info.get("last_backlinks") else None),
+            "referring_local": links.get("referring_local", 0 if info.get("last_backlinks") else None),
+            "top_referring": links.get("top", []),
+            "release": (info.get("last_backlinks") or info.get("last_import") or {}).get("release"),
+        }
+
+    return await asyncio.to_thread(_read)
 
 
 @router.get("/compare")
