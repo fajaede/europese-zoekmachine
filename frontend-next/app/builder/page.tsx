@@ -291,7 +291,8 @@ export default function BuilderPage() {
           site_type: siteType,
           industry,
           design,
-          style,
+          // never empty: older backends required a style text of 2+ characters
+          style: style.trim() || (design === 'modern' ? 'modern donker' : 'licht en rustig'),
           description,
         }),
       });
