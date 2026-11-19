@@ -84,6 +84,30 @@ class AuthorityTests(unittest.TestCase):
         self.assertEqual(result["ahead"][0]["authority"], 67)
         self.assertIsNone(result["behind"]["authority"])
 
+    def test_only_one_import_at_a_time_and_stale_lock_expires(self):
+        from datetime import datetime, timedelta, timezone
+        now = datetime(2026, 11, 19, 12, 0, tzinfo=timezone.utc)
+        authority.claim_import("backlinks", self.path, now=now)
+        with self.assertRaises(authority.ImportBusy):
+            authority.claim_import("authority", self.path, now=now + timedelta(hours=1))
+        authority.claim_import("authority", self.path, now=now + timedelta(hours=authority.LOCK_HOURS + 1))  # stale
+        authority.release_import(self.path)
+        authority.claim_import("authority", self.path, now=now)                                            # free again
+        authority.release_import(self.path)
+
+    def test_run_import_does_not_clear_a_running_import(self):
+        from unittest import mock
+        authority.claim_import("backlinks", self.path)
+        with self.assertRaises(authority.ImportBusy):
+            authority.run_import("r", self.path)
+        with authority.connect(self.path) as conn:
+            self.assertEqual(authority.meta(conn)["import_lock"]["job"], "backlinks")   # lock kept
+        authority.release_import(self.path)
+        with mock.patch.object(authority, "_stream_lines", return_value=iter([HEADER, line(1, 2.0, "nl.x")])):
+            authority.run_import("r", self.path)
+        with authority.connect(self.path) as conn:
+            self.assertNotIn("import_lock", authority.meta(conn))                       # released after success
+
 
 class FakeResponse:
     def __init__(self, data, status=200, content_type="application/octet-stream", fail_after=None, length=None):
@@ -132,6 +156,27 @@ class ResumableDownloadTests(unittest.TestCase):
         self.assertEqual(calls[0], None)
         self.assertTrue(all(c == "Bytes=1000-" or c == "bytes=1000-" for c in calls[1:]))
         self.assertEqual(pauses, [5, 10, 20])
+
+    def test_missing_file_or_changed_file_fails_fast(self):
+        import urllib.error
+        def missing(request, timeout):
+            raise urllib.error.HTTPError(request.full_url, 404, "Not Found", {}, None)
+        with self.assertRaises(authority.DownloadError):
+            authority.ResumableDownload("https://example.test/x.gz", opener=missing, sleep=lambda s: None).read(10)
+
+        calls = []
+        def changed(request, timeout):
+            calls.append((request.get_header("Range"), request.get_header("If-range")))
+            if len(calls) == 1:
+                response = FakeResponse(b"x" * 100, fail_after=10)
+                response.headers["ETag"] = '"v1"'
+                return response
+            return FakeResponse(b"y" * 100, status=200)     # If-Range did not match: whole new file
+        raw = authority.ResumableDownload("https://example.test/x.gz", opener=changed, sleep=lambda s: None)
+        self.assertEqual(raw.read(10), b"x" * 10)
+        with self.assertRaises(authority.DownloadError):
+            raw.read(10)
+        self.assertEqual(calls[1], ("bytes=10-", '"v1"'))
 
     def test_gives_up_after_max_retries(self):
         def opener(request, timeout):

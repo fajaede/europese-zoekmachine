@@ -29,7 +29,7 @@ import time
 import urllib.error
 import urllib.request
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable, Iterator
 
 DB_PATH = os.getenv("AUTHORITY_DB_PATH", os.path.join(os.path.dirname(__file__), "..", "authority.db"))
@@ -40,6 +40,7 @@ TLDS = ("nl", "be")
 HEADER = "#harmonicc_pos\t#harmonicc_val\t#pr_pos\t#pr_val\t#host_rev\t#n_hosts"
 USER_AGENT = "Mozilla/5.0 (compatible; FajaedeBot/1.0; +https://psa.fajaede.nl/bot)"
 BATCH = 50_000
+LOCK_HOURS = 6        # an import lock older than this is stale (container restarted mid-import)
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS authority (
@@ -110,6 +111,10 @@ def latest_release() -> str:
         return json.load(response)[0]["id"]
 
 
+class DownloadError(Exception):
+    """A download problem that retrying cannot fix (missing file, file replaced mid-download)."""
+
+
 class ResumableDownload(io.RawIOBase):
     """Read-only stream of a large HTTP file that survives dropped connections and Common Crawl's
     "SlowDown" throttling: on an error it waits (growing pause) and continues with a Range request
@@ -119,6 +124,7 @@ class ResumableDownload(io.RawIOBase):
         self.url, self.max_retries = url, max_retries
         self.opener, self.sleep = opener or urllib.request.urlopen, sleep
         self.position, self.length, self.response, self.failures = 0, None, None, 0
+        self.etag: str | None = None
 
     def readable(self) -> bool:
         return True
@@ -127,14 +133,23 @@ class ResumableDownload(io.RawIOBase):
         headers = {"User-Agent": USER_AGENT}
         if self.position:
             headers["Range"] = f"bytes={self.position}-"
-        response = self.opener(urllib.request.Request(self.url, headers=headers), timeout=120)
-        status = getattr(response, "status", 200)
-        if self.position and status != 206:
-            response.close()
-            raise OSError(f"server ignored the Range request (HTTP {status})")
+            if self.etag:
+                headers["If-Range"] = self.etag      # the server sends the whole file (200) if it changed
+        try:
+            response = self.opener(urllib.request.Request(self.url, headers=headers), timeout=120)
+        except urllib.error.HTTPError as error:
+            if 400 <= error.code < 500 and error.code not in (408, 429):
+                raise DownloadError(f"HTTP {error.code} for {self.url}") from error     # retrying will not help
+            raise
         if "xml" in (response.headers.get("Content-Type") or "").lower():   # S3 error body (e.g. SlowDown)
             response.close()
             raise OSError("error document instead of data")
+        status = getattr(response, "status", 200)
+        if self.position and status != 206:
+            response.close()
+            raise DownloadError(f"cannot resume (HTTP {status}): file changed on the server or no Range support")
+        if self.etag is None:
+            self.etag = response.headers.get("ETag")
         if self.length is None:
             length = response.headers.get("Content-Length")
             self.length = int(length) if length and length.isdigit() else None
@@ -248,14 +263,44 @@ def import_ranks(lines: Iterable[str], release: str, path: str | None = None,
     return summary
 
 
+class ImportBusy(RuntimeError):
+    """Another Common Crawl import (authority or backlinks) is still running."""
+
+
+def claim_import(job: str, path: str | None = None, now: datetime | None = None) -> None:
+    """One Common Crawl import at a time (they share authority.db and the network). A lock older than
+    LOCK_HOURS is ignored, so a crash or container restart never blocks imports for good."""
+    init(path)
+    now = now or datetime.now(timezone.utc)
+    with connect(path) as conn:
+        conn.execute("BEGIN IMMEDIATE")                      # check and set atomically
+        lock = meta(conn).get("import_lock") or {}
+        try:
+            started = datetime.fromisoformat(lock["started"])
+        except (KeyError, TypeError, ValueError):
+            started = None
+        if started and now - started < timedelta(hours=LOCK_HOURS):
+            conn.rollback()
+            raise ImportBusy(f"{lock.get('job')} import running since {lock['started']}; try again later")
+        _set_meta(conn, import_lock={"job": job, "started": now.replace(microsecond=0).isoformat()})
+
+
+def release_import(path: str | None = None) -> None:
+    with connect(path) as conn:
+        conn.execute("DELETE FROM meta WHERE key = 'import_lock'")
+
+
 def run_import(release: str | None = None, path: str | None = None) -> dict[str, Any]:
-    release = release or latest_release()
+    claim_import("authority", path)
     try:
+        release = release or latest_release()
         return import_ranks(_stream_lines(release), release, path)
     except BaseException as error:
         with connect(path) as conn:
             _set_meta(conn, import_running=False, import_error=f"{type(error).__name__}: {error}"[:500])
         raise
+    finally:
+        release_import(path)
 
 
 def lookup(domains: Iterable[str], path: str | None = None) -> dict[str, dict[str, Any]]:

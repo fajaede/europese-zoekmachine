@@ -9,6 +9,7 @@ import xml.etree.ElementTree as ET
 from bisect import bisect_left, bisect_right
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from typing import Any
 from urllib.parse import parse_qsl, urlsplit
 
 
@@ -109,6 +110,15 @@ def classify(domain: str, html: str, schema_types: set[str], sitemap_url_count: 
 def cohorts(country: str, category: str) -> list[str]:
     """A domain belongs to: its country+category, its category everywhere, its country, and all."""
     return [f"{country}:{category}", f"*:{category}", f"{country}:*", "*:*"]
+
+
+def candidate_cohorts(rows: list[Any], domain: str, category: str | None) -> tuple[str, str | None, list[str]]:
+    """Country, category and cohorts (most specific first) for a domain: taken from the benchmark
+    when we crawled it, otherwise from its TLD and the category the caller gives (if valid)."""
+    known = next((row for row in rows if row["root_domain"] == domain), None)
+    country = known["country"] if known else country_of(domain)
+    cat = known["category"] if known else (category if category in CATEGORIES else None)
+    return country, cat, (cohorts(country, cat) if cat else [f"{country}:*", "*:*"])
 
 
 # --- URL priority -------------------------------------------------------------------------

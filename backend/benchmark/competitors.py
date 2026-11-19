@@ -67,10 +67,7 @@ def find_competitors(rows: list[Any], domain: str, scores: dict[str, float], cat
                      limit: int = 3) -> dict[str, Any]:
     """Cohort = the most specific of country+category, category, country, all with at least MIN_GROUP
     sites. Returns the `limit` sites just above you (closest first), the leader and the one just below."""
-    known = next((row for row in rows if row["root_domain"] == domain), None)
-    country = known["country"] if known else rules.country_of(domain)
-    cat = known["category"] if known else (category if category in rules.CATEGORIES else None)
-    candidates = rules.cohorts(country, cat) if cat else [f"{country}:*", "*:*"]
+    _country, _category, candidates = rules.candidate_cohorts(rows, domain, category)
     yours = {param: scores.get(param) for param in METRICS}
     your_overall = overall(yours)
 

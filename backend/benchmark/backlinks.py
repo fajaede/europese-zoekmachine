@@ -241,6 +241,7 @@ def run_import(release: str | None = None, path: str | None = None) -> dict[str,
             release = (authority.meta(conn).get("last_import") or {}).get("release")
     if not release:
         raise ValueError("Run the authority import first: python -m backend.benchmark.authority import")
+    authority.claim_import("backlinks", path)
     try:
         return import_backlinks(_stream(release, "vertices"), _stream(release, "edges"), release, path)
     except BaseException as error:
@@ -248,6 +249,8 @@ def run_import(release: str | None = None, path: str | None = None) -> dict[str,
             authority._set_meta(conn, backlinks_running=False,
                                 backlinks_error=f"{type(error).__name__}: {error}"[:500])
         raise
+    finally:
+        authority.release_import(path)
 
 
 def lookup(domain: str, path: str | None = None) -> dict[str, Any] | None:

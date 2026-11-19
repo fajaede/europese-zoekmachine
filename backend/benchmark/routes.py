@@ -119,13 +119,17 @@ async def index_stats(request: Request) -> dict[str, Any]:
     return await asyncio.to_thread(_read, store.index_stats)
 
 
+def _latest_rows() -> list[dict[str, Any]]:
+    """Latest scores per domain (blocking: call via asyncio.to_thread)."""
+    store.init()
+    with store.connect() as conn:
+        return [dict(row) for row in store.latest_scores(conn)]
+
+
 def compare_scores(rows: list[Any], domain: str, scores: dict[str, int], category: str | None) -> dict[str, Any]:
     """Percentile per metric in the most specific cohort that has at least rules.MIN_COHORT_SIZE sites
     and real spread (rules.has_spread). A metric without such a cohort is left out."""
-    known = next((row for row in rows if row["root_domain"] == domain), None)
-    country = known["country"] if known else rules.country_of(domain)
-    cat = known["category"] if known else (category if category in rules.CATEGORIES else None)
-    candidates = rules.cohorts(country, cat) if cat else [f"{country}:*", "*:*"]
+    country, cat, candidates = rules.candidate_cohorts(rows, domain, category)
     groups = store.cohort_groups(rows)
     newest = max((row["calculated_at"] for row in rows), default=None)
     results: dict[str, Any] = {}
@@ -162,12 +166,7 @@ async def competitors(request: Request, domain: str, category: str | None = None
     if any(not 0 <= value <= 100 for value in scores.values()) or not 1 <= limit <= 10:
         raise HTTPException(status_code=422, detail="Scores must be 0-100 and limit 1-10")
 
-    def _rows() -> list[Any]:
-        store.init()
-        with store.connect() as conn:
-            return [dict(row) for row in store.latest_scores(conn)]
-
-    result = find_competitors(await asyncio.to_thread(_rows), rules.root_domain(domain), scores, category, limit)
+    result = find_competitors(await asyncio.to_thread(_latest_rows), rules.root_domain(domain), scores, category, limit)
     result["cohort_label"] = cohort_label(result["cohort"]) if result["cohort"] else None
     add_authority(result)
     return result
@@ -230,10 +229,5 @@ async def compare(request: Request, domain: str, category: str | None = None, ps
     if any(not 0 <= value <= 100 for value in scores.values()):
         raise HTTPException(status_code=422, detail="Scores must be 0-100")
 
-    def _rows() -> list[Any]:
-        store.init()
-        with store.connect() as conn:
-            return [dict(row) for row in store.latest_scores(conn)]
-
-    rows = await asyncio.to_thread(_rows)
+    rows = await asyncio.to_thread(_latest_rows)
     return compare_scores(rows, rules.root_domain(domain), scores, category)
