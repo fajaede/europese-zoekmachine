@@ -81,6 +81,7 @@ class StoreLinkTests(Databases):
         with store.connect() as conn:
             self.assertEqual(worker.store_links(conn, "www.groot.nl", links), 0)      # groot.nl is in the CC graph
             self.assertEqual(worker.store_links(conn, "stylez.nl", links), 1)          # unknown to CC: stored
+            self.assertEqual(worker.store_links(conn, "partner.com", links), 0)        # not .nl/.be: cannot check CC
             rows = conn.execute("SELECT source_domain, target_domain FROM links").fetchall()
         self.assertEqual([tuple(r) for r in rows], [("stylez.nl", "jij.nl")])
 
@@ -132,6 +133,7 @@ class PluginLinkTests(Databases):
         with store.connect() as conn:
             store.save_links(conn, "stylez.nl", {"jij.nl": ("https://stylez.nl/", False)})
             store.save_links(conn, "sterk.nl", {"jij.nl": ("https://sterk.nl/", False)})   # in CC since then
+            store.save_links(conn, "partner.com", {"jij.nl": ("https://partner.com/", False)})  # may be in CC's count
         data = self.client.get("/api/plugin/authority", headers=self.ticket()).json()
         self.assertEqual(data["links"]["referring_domains"], 8)                              # Common Crawl
         self.assertEqual(data["fajaede_links"]["referring_domains"], 1)                      # only stylez.nl
@@ -160,6 +162,7 @@ class PluginLinkTests(Databases):
         self.assertEqual(self.report("https://groot.nl/").json()["status"], "in_common_crawl")   # no fetch needed
         self.assertEqual(self.report("https://www.jij.nl/").json()["status"], "own_site")
         self.assertEqual(self.report("ftp://stylez.nl/x").json()["status"], "invalid")
+        self.assertEqual(self.report("https://www.partner.com/links").json()["status"], "not_covered")
         with store.connect() as conn:
             rows = conn.execute("SELECT source_domain, verified FROM links").fetchall()
             queued = conn.execute("SELECT source FROM domains WHERE root_domain='stylez.nl'").fetchone()

@@ -126,6 +126,9 @@ def own_links(domain: str) -> dict[str, Any] | None:
             rows = [dict(row) for row in store.own_backlinks(conn, domain)]
     except sqlite3.Error:
         return None
+    # only .nl/.be sources: for those we can check the Common Crawl graph; a .com source may already be in
+    # Common Crawl's referring-domain count (it counts every extension), so it is never added on top
+    rows = [row for row in rows if row["source_domain"].rsplit(".", 1)[-1] in COVERED_TLDS]
     in_cc = authority.known(row["source_domain"] for row in rows)
     rows = [row for row in rows if row["source_domain"] not in in_cc]
     return {
@@ -187,7 +190,7 @@ class LinkReport(BaseModel):
 
 async def check_reported_link(url: str, target: str) -> dict[str, Any]:
     """Fetch the reported page as FajaedeScan and store the link when it is really there.
-    status: added | not_found | in_common_crawl | own_site | blocked | unreachable | invalid"""
+    status: added | not_found | in_common_crawl | not_covered | own_site | blocked | unreachable | invalid"""
     url = url.strip()
     parts = urlsplit(url)
     source = worker.registered_domain(parts.hostname or "")
@@ -195,6 +198,8 @@ async def check_reported_link(url: str, target: str) -> dict[str, Any]:
         return {"status": "invalid", "source": None}
     if source == target:
         return {"status": "own_site", "source": source}
+    if source.rsplit(".", 1)[-1] not in COVERED_TLDS:
+        return {"status": "not_covered", "source": source}
     if await asyncio.to_thread(authority.known, [source]):
         return {"status": "in_common_crawl", "source": source}
     origin = f"{parts.scheme}://{parts.netloc}"

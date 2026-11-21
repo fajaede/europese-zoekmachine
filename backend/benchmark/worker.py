@@ -431,7 +431,7 @@ def store_links(conn: Any, source: str, links: dict[str, tuple[str, bool]]) -> i
     Targets Common Crawl does not know are queued for a crawl (capped per day): new sites to discover.
     Returns the number of links stored."""
     source = registered_domain(source)
-    if not links or not source or authority.known([source]):
+    if not links or source.rsplit(".", 1)[-1] not in LINK_TLDS or authority.known([source]):
         return 0
     store.save_links(conn, source, links)
     unknown = sorted(set(links) - authority.known(links))
