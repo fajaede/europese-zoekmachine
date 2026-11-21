@@ -14,7 +14,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from backend import plugin_cloud
-from backend.benchmark import authority, backlinks
+from backend.benchmark import authority, backlinks, store
 from backend.test_backlinks import EDGES, RANKS, VERTICES, as_bytes
 
 
@@ -36,11 +36,14 @@ class TicketTests(unittest.TestCase):
                                    "cc-main-2026-aug-sep-oct", self.path)
         self.db = mock.patch.object(authority, "DB_PATH", self.path)
         self.db.start()
+        self.bench = mock.patch.object(store, "DB_PATH", os.path.join(self.tmp.name, "benchmark.db"))
+        self.bench.start()
         app = FastAPI()
         app.include_router(plugin_cloud.router)
         self.client = TestClient(app)
 
     def tearDown(self):
+        self.bench.stop()
         self.db.stop()
         self.env.stop()
         self.tmp.cleanup()

@@ -20,7 +20,7 @@ from urllib.parse import urljoin, urlsplit
 import httpx
 from bs4 import BeautifulSoup
 
-from backend.benchmark import rules, signals, store
+from backend.benchmark import authority, rules, signals, store
 from backend.seo_geo_audit import CRAWLER_TOKEN, CRAWLER_USER_AGENT, audit_seo_geo, fetch_public_resource
 
 PAGE_DELAY_SECONDS = float(os.getenv("BENCHMARK_PAGE_DELAY", "1.0"))   # politeness per domain
@@ -149,6 +149,54 @@ def internal_links(html: str, base_url: str, host: str) -> set[str]:
     return links
 
 
+_A_TAG = re.compile(r"<a\b[^>]*>", re.I)
+_REL = re.compile(r"""\brel\s*=\s*["']([^"']*)""", re.I)
+_NOFOLLOW = {"nofollow", "sponsored", "ugc"}
+LINK_TLDS = ("nl", "be")
+MAX_EXTERNAL_LINKS = 200     # a page linking to more sites than this is a link list/farm: ignored
+
+
+def registered_domain(host: str) -> str:
+    """'www.blog.Shop.nl' -> 'shop.nl': the domain level of the Common Crawl graph (.nl/.be have no
+    second-level registrations worth handling here)."""
+    labels = [part for part in host.lower().rstrip(".").split(".") if part]
+    return ".".join(labels[-2:]) if len(labels) >= 2 else ""
+
+
+def external_links(html: str, base_url: str, own_domain: str) -> dict[str, bool]:
+    """Links to OTHER .nl/.be sites on a page: target domain -> nofollow (True only when every link to that
+    site carries rel nofollow/sponsored/ugc). Empty for pages with more than MAX_EXTERNAL_LINKS targets."""
+    own = registered_domain(own_domain)
+    found: dict[str, bool] = {}
+    for tag in _A_TAG.findall(html):
+        href = _HREF.match(tag)
+        if not href:
+            continue
+        url = urljoin(base_url, href.group(1).strip())
+        parts = urlsplit(url)
+        if parts.scheme not in ("http", "https"):
+            continue
+        host = parts.hostname or ""
+        target = registered_domain(host)
+        if not target or target == own or target.rsplit(".", 1)[-1] not in LINK_TLDS or is_infrastructure(host):
+            continue
+        rel = _REL.search(tag)
+        nofollow = bool(rel and _NOFOLLOW & set(rel.group(1).lower().split()))
+        found[target] = found.get(target, True) and nofollow
+        if len(found) > MAX_EXTERNAL_LINKS:
+            return {}
+    return found
+
+
+def merge_links(into: dict[str, tuple[str, bool]], page_url: str, links: dict[str, bool]) -> None:
+    """Collect a crawl's links per target: the first page that links is the sample; followed wins."""
+    for target, nofollow in links.items():
+        if target in into:
+            into[target] = (into[target][0], into[target][1] and nofollow)
+        else:
+            into[target] = (page_url, nofollow)
+
+
 class Frontier:
     """Priority queue of candidate URLs for one domain. Scores use the static signals plus
     internal link authority, which grows while pages are crawled (lazy re-push in a heap)."""
@@ -266,7 +314,7 @@ async def crawl_domain(domain_row: dict[str, Any], known: dict[str, dict[str, An
     domain = domain_row["root_domain"]
     host = domain_row["hostname"] or domain
     result: dict[str, Any] = {"category": domain_row["category"], "language": None, "scores": None, "pages": [],
-                              "unchanged": [], "homepage_hash": None, "error": None}
+                              "unchanged": [], "homepage_hash": None, "error": None, "links": {}}
 
     home = None
     reasons: list[str] = []
@@ -331,6 +379,7 @@ async def crawl_domain(domain_row: dict[str, Any], known: dict[str, dict[str, An
     category, home_page, scores, frontier = await asyncio.to_thread(analyse_home)
     result.update(category=category, language=home_page["language"], scores=scores, homepage_hash=home_hash)
     result["pages"].append(home_page)
+    merge_links(result["links"], final_url, external_links(html, final_url, domain))
 
     hashes = {home_hash}
     limit = rules.page_limit(category) - 1
@@ -350,6 +399,7 @@ async def crawl_domain(domain_row: dict[str, Any], known: dict[str, dict[str, An
             continue
         hashes.add(digest)
         frontier.link_from(p_url, internal_links(p_html, p_url, frontier.host))
+        merge_links(result["links"], p_url, external_links(p_html, p_url, domain))
         previous = known.get(p_url)
         if previous and previous.get("content_hash") == digest:
             result["unchanged"].append(p_url)   # same content as last time: no re-analysis
@@ -373,6 +423,22 @@ def _store_result(job: dict[str, Any], outcome: dict[str, Any]) -> None:
                          scores=outcome["scores"], pages_crawled=len(outcome["pages"]) + len(unchanged),
                          pages_unchanged=len(unchanged), homepage_hash=outcome.get("homepage_hash"),
                          error=outcome["error"])
+        store_links(conn, job["root_domain"], outcome.get("links") or {})
+
+
+def store_links(conn: Any, source: str, links: dict[str, tuple[str, bool]]) -> int:
+    """Own link index. Sources in the Common Crawl graph are skipped (their links are counted there already).
+    Targets Common Crawl does not know are queued for a crawl (capped per day): new sites to discover.
+    Returns the number of links stored."""
+    source = registered_domain(source)
+    if not links or not source or authority.known([source]):
+        return 0
+    store.save_links(conn, source, links)
+    unknown = sorted(set(links) - authority.known(links))
+    room = store.discovery_room(conn)
+    if unknown and room:
+        store.add_domains(conn, [{"domain": target} for target in unknown[:room]], "link")
+    return len(links)
 
 
 def _known(domain_id: int) -> dict[str, dict[str, Any]]:

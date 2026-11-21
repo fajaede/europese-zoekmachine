@@ -362,6 +362,25 @@ def lookup(domains: Iterable[str], path: str | None = None) -> dict[str, dict[st
             for row in rows}
 
 
+def known(domains: Iterable[str], path: str | None = None) -> set[str]:
+    """The domains that are in the Common Crawl graph (any rank, linked or not). Their links are already in
+    Common Crawl's referring-domain counts, so the own link index (store.links) does not store them twice.
+    Empty when nothing is imported yet."""
+    wanted = sorted({d.lower().removeprefix("www.") for d in domains if d})
+    if not wanted or not os.path.exists(path or DB_PATH):
+        return set()
+    found: set[str] = set()
+    try:
+        with connect(path) as conn:
+            for start in range(0, len(wanted), 500):
+                chunk = wanted[start:start + 500]
+                marks = ",".join("?" * len(chunk))
+                found.update(row[0] for row in conn.execute(f"SELECT domain FROM authority WHERE domain IN ({marks})", chunk))
+    except sqlite3.OperationalError:
+        return set()
+    return found
+
+
 def top_domains(limit: int, exclude: set[str], path: str | None = None) -> list[dict[str, Any]]:
     """Strongest .nl/.be domains not yet in `exclude`, both TLDs interleaved by global position."""
     from backend.benchmark.worker import is_infrastructure   # lazy: keeps this module light for tests

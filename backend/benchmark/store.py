@@ -87,6 +87,19 @@ CREATE TABLE IF NOT EXISTS benchmarks (
     calculated_at TEXT NOT NULL,
     PRIMARY KEY (domain_id, cohort, metric)
 );
+
+-- Own link index: links between .nl/.be sites seen by FajaedeBot or reported by a site owner (FajaedeScan).
+-- Only sources that are NOT in the Common Crawl graph: those links are already counted there.
+CREATE TABLE IF NOT EXISTS links (
+    target_domain TEXT NOT NULL,
+    source_domain TEXT NOT NULL,
+    sample_url TEXT NOT NULL,                      -- a page on the source that carries the link
+    nofollow INTEGER NOT NULL DEFAULT 0,           -- 1 when every link seen there is nofollow/sponsored/ugc
+    verified INTEGER NOT NULL DEFAULT 0,           -- 1 when reported by the site owner and checked
+    first_seen_at TEXT NOT NULL,
+    last_seen_at TEXT NOT NULL,
+    PRIMARY KEY (target_domain, source_domain)
+);
 """
 
 METRICS = ["psa_score", "seo_score", "geo_score", "ai_visibility_score", "security_score", "overall_score"]
@@ -209,6 +222,43 @@ def known_pages(conn: sqlite3.Connection, domain_id: int) -> dict[str, dict[str,
                          "word_count": row["word_count"]}
             for row in conn.execute("SELECT url, content_hash, http_status, word_count FROM pages WHERE domain_id=?",
                                     (domain_id,))}
+
+
+LINK_ACTIVE_DAYS = 180       # a link counts while it was seen in this period (pages are not all recrawled each time)
+DISCOVERY_PER_DAY = 500      # new domains queued per day from links to sites Common Crawl does not know
+
+
+def save_links(conn: sqlite3.Connection, source: str, links: dict[str, tuple[str, bool]], *,
+               verified: bool = False, now: datetime | None = None) -> int:
+    """links: target domain -> (sample page url, nofollow). New links get first_seen; known ones last_seen."""
+    stamp = now_iso(now)
+    conn.executemany(
+        "INSERT INTO links (target_domain, source_domain, sample_url, nofollow, verified, first_seen_at, last_seen_at)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(target_domain, source_domain) DO UPDATE SET"
+        " sample_url=excluded.sample_url, nofollow=excluded.nofollow, last_seen_at=excluded.last_seen_at,"
+        " verified=MAX(verified, excluded.verified)",
+        [(target, source, url[:1000], int(nofollow), int(verified), stamp, stamp)
+         for target, (url, nofollow) in links.items()],
+    )
+    return len(links)
+
+
+def own_backlinks(conn: sqlite3.Connection, target: str, now: datetime | None = None) -> list[sqlite3.Row]:
+    """Active links to `target` in the own index, followed links and verified ones first, then newest."""
+    since = now_iso((now or datetime.now(timezone.utc)) - timedelta(days=LINK_ACTIVE_DAYS))
+    return conn.execute(
+        "SELECT source_domain, sample_url, nofollow, verified, first_seen_at, last_seen_at FROM links"
+        " WHERE target_domain=? AND last_seen_at>=? ORDER BY nofollow, verified DESC, first_seen_at DESC",
+        (target, since),
+    ).fetchall()
+
+
+def discovery_room(conn: sqlite3.Connection, now: datetime | None = None) -> int:
+    """How many more domains may be queued today from discovered links."""
+    day = (now or datetime.now(timezone.utc)).replace(hour=0, minute=0, second=0, microsecond=0)
+    used = conn.execute("SELECT COUNT(*) FROM domains WHERE source='link' AND first_seen_at>=?",
+                        (now_iso(day),)).fetchone()[0]
+    return max(0, DISCOVERY_PER_DAY - used)
 
 
 def overall(scores: dict[str, int | None]) -> int | None:
