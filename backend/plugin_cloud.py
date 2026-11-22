@@ -22,6 +22,9 @@ payload: {"v": 1, "domain": "example.nl", "plan": "free|pro|premium|agency|enter
   POST /api/plugin/site-audit    start a full site audit of the ticket domain (pro and higher; limits per plan)
   GET  /api/plugin/site-audit    the latest audit (status, report) and the remaining quota
       The audit crawls the site from outside as FajaedeScan (backend/benchmark/site_audit.py).
+
+  GET  /api/plugin/competitors   sites in your sector that score just above/below you, the leader, and
+      where they are ahead (pro and higher; from the Fajaede benchmark, like psa.fajaede.nl)
 """
 
 from __future__ import annotations
@@ -44,6 +47,8 @@ from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel, Field
 
 from backend.benchmark import authority, backlinks, rules, site_audit, store, worker
+from backend.benchmark.competitors import METRICS as COMPETITOR_METRICS, find_competitors
+from backend.benchmark.routes import _latest_rows, add_authority, cohort_label
 from backend.seo_geo_audit import SCAN_TOKEN, SCAN_USER_AGENT, validate_public_url
 
 router = APIRouter(prefix="/api/plugin", tags=["plugin"])
@@ -298,3 +303,37 @@ async def plugin_site_audit_start(authorization: str | None = Header(default=Non
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     await asyncio.to_thread(site_audit.create_audit, url, quota["max_pages"], _audit_owner(domain))
     return await asyncio.to_thread(audit_state, domain, plan)
+
+
+# --- competitors ----------------------------------------------------------------------------
+
+def competitors_report(domain: str, plan: str) -> dict[str, Any]:
+    """Your benchmark scores and the competitors around you. `measured` is False until FajaedeBot has
+    crawled the site (plugin sites are queued with priority)."""
+    covered = domain.rsplit(".", 1)[-1] in COVERED_TLDS
+    base: dict[str, Any] = {"domain": domain, "plan": plan, "covered": covered, "locked": plan not in PAID,
+                            "measured": False}
+    if not covered:
+        return base
+    rows = _latest_rows()
+    mine = next((row for row in rows if row["root_domain"] == domain), None)
+    if mine is None:
+        queue_site(domain, "plugin")
+        return base
+    scores = {param: mine[column] for param, column in COMPETITOR_METRICS.items() if mine[column] is not None}
+    base.update(measured=True, measured_at=mine["calculated_at"],
+                your_scores={param: round(value) for param, value in scores.items()})
+    if base["locked"]:
+        return base
+    result = find_competitors(rows, domain, scores, mine["category"], limit=3)
+    result.pop("distribution", None)
+    result["cohort_label"] = cohort_label(result["cohort"]) if result["cohort"] else None
+    add_authority(result)
+    return {**base, **result}
+
+
+@router.get("/competitors")
+async def plugin_competitors(authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    ticket = verify_ticket(authorization)
+    _rate_limit(ticket["domain"])
+    return await asyncio.to_thread(competitors_report, ticket["domain"], ticket["plan"])
