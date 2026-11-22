@@ -18,6 +18,10 @@ payload: {"v": 1, "domain": "example.nl", "plan": "free|pro|premium|agency|enter
   POST /api/plugin/report-link   {"url": "https://andere-site.nl/pagina"}   (pro and higher)
       "Missing a link?": FajaedeScan fetches that page (robots.txt respected, public addresses only) and
       stores the link only when the page really links to the ticket domain.
+
+  POST /api/plugin/site-audit    start a full site audit of the ticket domain (pro and higher; limits per plan)
+  GET  /api/plugin/site-audit    the latest audit (status, report) and the remaining quota
+      The audit crawls the site from outside as FajaedeScan (backend/benchmark/site_audit.py).
 """
 
 from __future__ import annotations
@@ -30,6 +34,7 @@ import re
 import sqlite3
 import time
 from collections import defaultdict, deque
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -38,8 +43,8 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel, Field
 
-from backend.benchmark import authority, backlinks, rules, store, worker
-from backend.seo_geo_audit import SCAN_TOKEN, SCAN_USER_AGENT
+from backend.benchmark import authority, backlinks, rules, site_audit, store, worker
+from backend.seo_geo_audit import SCAN_TOKEN, SCAN_USER_AGENT, validate_public_url
 
 router = APIRouter(prefix="/api/plugin", tags=["plugin"])
 
@@ -50,6 +55,10 @@ CLOCK_SKEW = 300
 RATE_LIMIT = 120                   # requests per domain per hour (the plugin caches answers for a day)
 COVERED_TLDS = ("nl", "be")
 REPORTS_PER_DAY = 10              # "missing a link?" checks per site per day
+# site audit per plan: (max pages, audits per window, window in days)
+AUDIT_PLANS: dict[str, tuple[int, int, int]] = {
+    "pro": (25, 2, 7), "premium": (100, 1, 1), "agency": (100, 3, 1), "enterprise": (100, 3, 1),
+}
 OWN_TOP = 10
 _DOMAIN = re.compile(r"^(?=.{4,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$")
 _hits: dict[str, deque] = defaultdict(deque)
@@ -232,3 +241,60 @@ async def plugin_report_link(body: LinkReport, authorization: str | None = Heade
         raise HTTPException(status_code=400, detail="Only .nl and .be sites are covered.")
     _rate_limit(ticket["domain"], window=86400, limit=REPORTS_PER_DAY, book=_reports)
     return await check_reported_link(body.url, ticket["domain"])
+
+
+# --- site audit -----------------------------------------------------------------------------
+
+def _audit_owner(domain: str) -> str:
+    return f"plugin:{domain}"
+
+
+def audit_quota(domain: str, plan: str, now: datetime | None = None) -> dict[str, Any] | None:
+    """Pages, limit and use of the current window; None for the free plan."""
+    if plan not in AUDIT_PLANS:
+        return None
+    pages, limit, days = AUDIT_PLANS[plan]
+    now = now or datetime.now(timezone.utc)
+    used = site_audit.audits_since(_audit_owner(domain), now - timedelta(days=days))
+    next_at = None
+    if len(used) >= limit:
+        next_at = (datetime.fromisoformat(used[0]) + timedelta(days=days)).isoformat()
+    return {"max_pages": pages, "limit": limit, "window_days": days, "used": len(used),
+            "remaining": max(0, limit - len(used)), "next_at": next_at}
+
+
+def audit_state(domain: str, plan: str) -> dict[str, Any]:
+    _benchmark_store()
+    return {"domain": domain, "plan": plan, "locked": plan not in AUDIT_PLANS,
+            "quota": audit_quota(domain, plan),
+            "audit": site_audit.latest_audit(_audit_owner(domain)) if plan in AUDIT_PLANS else None}
+
+
+@router.get("/site-audit")
+async def plugin_site_audit_status(authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    ticket = verify_ticket(authorization)
+    _rate_limit(ticket["domain"])
+    return await asyncio.to_thread(audit_state, ticket["domain"], ticket["plan"])
+
+
+@router.post("/site-audit", status_code=202)
+async def plugin_site_audit_start(authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    ticket = verify_ticket(authorization)
+    domain, plan = ticket["domain"], ticket["plan"]
+    if plan not in AUDIT_PLANS:
+        raise HTTPException(status_code=403, detail="The full site audit is part of Pro and higher.")
+    _rate_limit(domain)
+    state = await asyncio.to_thread(audit_state, domain, plan)
+    current = state["audit"]
+    if current and current["status"] in ("queued", "running"):
+        return state                                  # one audit at a time: report the running one
+    quota = state["quota"]
+    if quota["remaining"] <= 0:
+        raise HTTPException(status_code=429, detail={"message": "Audit limit reached for this period.",
+                                                     "next_at": quota["next_at"]})
+    try:
+        url = await validate_public_url(f"https://{domain}/")
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    await asyncio.to_thread(site_audit.create_audit, url, quota["max_pages"], _audit_owner(domain))
+    return await asyncio.to_thread(audit_state, domain, plan)

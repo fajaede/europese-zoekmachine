@@ -311,6 +311,22 @@ def get_audit(audit_id: str, owner: str | None = None) -> dict[str, Any] | None:
             "result": json.loads(row["result_json"]) if row["result_json"] else None}
 
 
+def latest_audit(owner: str) -> dict[str, Any] | None:
+    """The most recent audit of this owner (any status), as get_audit returns it."""
+    with store.connect() as conn:
+        row = conn.execute("SELECT id FROM site_audits WHERE owner=? ORDER BY requested_at DESC, rowid DESC LIMIT 1",
+                           (owner,)).fetchone()
+    return get_audit(row["id"], owner) if row else None
+
+
+def audits_since(owner: str, since: datetime) -> list[str]:
+    """Request times of this owner's audits since `since` that count towards a quota (failed ones do not)."""
+    with store.connect() as conn:
+        rows = conn.execute("SELECT requested_at FROM site_audits WHERE owner=? AND requested_at>=? AND status!='failed'"
+                            " ORDER BY requested_at", (owner, store.now_iso(since))).fetchall()
+    return [row["requested_at"] for row in rows]
+
+
 def _claim_audit() -> dict[str, Any] | None:
     with store.connect() as conn:
         row = conn.execute("SELECT * FROM site_audits WHERE status='queued' ORDER BY requested_at LIMIT 1").fetchone()
