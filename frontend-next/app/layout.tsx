@@ -85,8 +85,7 @@ export default function RootLayout({
         <meta itemProp="description" content={description} />
         <meta itemProp="image" content="/images/eu.jpg" />
         <meta property="fb:pages" content="fajaede1" />
-        <meta property="fb:admins" content="fajaede1" />
-        <meta property="article:publisher" content="fajaede1" />
+        <meta property="article:publisher" content="https://www.facebook.com/fajaede1" />
         <script
           type="application/ld+json"
           className="fajaede-schema-graph fajaede-schema-graph--main"
