@@ -83,11 +83,11 @@ class WebBotAuthTests(unittest.TestCase):
             return real_client(transport=httpx.MockTransport(handler), **kwargs)
 
         async def same(url):
-            return url
+            return url, None
 
         with patch.dict(os.environ, {"WEB_BOT_AUTH_CRAWLER_KEY": SEED}), \
                 patch.object(seo_geo_audit.httpx, "AsyncClient", client), \
-                patch.object(seo_geo_audit, "validate_public_url", same):
+                patch.object(seo_geo_audit, "resolve_public_target", same):
             asyncio.run(seo_geo_audit.fetch_public_resource("https://a.nl/"))                       # scan (default UA)
             asyncio.run(seo_geo_audit.fetch_public_resource(
                 "https://b.nl/", headers={"User-Agent": seo_geo_audit.CRAWLER_USER_AGENT}))           # crawler

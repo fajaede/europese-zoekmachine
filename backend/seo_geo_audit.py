@@ -28,7 +28,10 @@ CRAWLER_USER_AGENT = f"Mozilla/5.0 (compatible; {CRAWLER_TOKEN}/1.0; +https://ps
 USER_AGENT = SCAN_USER_AGENT  # default: the audit endpoint runs on request
 
 
-def _resolve_public_url(value: str) -> str:
+def _resolve_public_target(value: str) -> tuple[str, str]:
+    """Validate a URL and return (normalised url, the public IP address to connect to). Requests are then
+    sent to exactly that address (see fetch_public_resource), so a second DNS lookup cannot point the
+    connection at an internal address afterwards (DNS rebinding)."""
     try:
         parsed = urlsplit(value)
         port = parsed.port
@@ -52,24 +55,53 @@ def _resolve_public_url(value: str) -> str:
         literal_address = ipaddress.ip_address(hostname)
     except ValueError:
         try:
-            addresses = {
+            ordered = [
                 ipaddress.ip_address(result[4][0].split("%", 1)[0])
                 for result in socket.getaddrinfo(hostname, port or (443 if parsed.scheme == "https" else 80), type=socket.SOCK_STREAM)
-            }
+            ]
         except (OSError, ValueError) as exc:
             raise ValueError("The website hostname could not be resolved.") from exc
-        if not addresses or any(not address.is_global for address in addresses):
+        if not ordered or any(not address.is_global for address in ordered):
             raise ValueError("Private and local addresses cannot be audited.")
+        # IPv4 first: the connection now uses exactly one address, and containers often lack IPv6
+        pinned = next((address for address in ordered if address.version == 4), ordered[0])
     else:
         if not literal_address.is_global:
             raise ValueError("Private and local addresses cannot be audited.")
+        pinned = literal_address
 
-    return urlunsplit((parsed.scheme.lower(), parsed.netloc, parsed.path or "/", parsed.query, ""))
+    return urlunsplit((parsed.scheme.lower(), parsed.netloc, parsed.path or "/", parsed.query, "")), str(pinned)
+
+
+def _resolve_public_url(value: str) -> str:
+    return _resolve_public_target(value)[0]
 
 
 async def validate_public_url(value: str) -> str:
     """Validate a URL and its resolved addresses without blocking the event loop."""
     return await asyncio.to_thread(_resolve_public_url, value)
+
+
+async def resolve_public_target(value: str) -> tuple[str, str | None]:
+    """(url, public IP to connect to) without blocking the event loop."""
+    return await asyncio.to_thread(_resolve_public_target, value)
+
+
+def _pinned_request(url: str, ip: str | None) -> tuple[str, dict[str, str], dict[str, Any]]:
+    """The request URL with the validated IP instead of the hostname, plus the Host header and TLS SNI so
+    the site (and its certificate check) still sees the real hostname. No IP (tests): unchanged."""
+    if not ip:
+        return url, {}, {}
+    parts = urlsplit(url)
+    hostname = parts.hostname or ""
+    if hostname == ip:
+        return url, {}, {}
+    host_ip = f"[{ip}]" if ":" in ip else ip
+    netloc = host_ip + (f":{parts.port}" if parts.port else "")
+    pinned_url = urlunsplit((parts.scheme, netloc, parts.path or "/", parts.query, ""))
+    host_header = hostname + (f":{parts.port}" if parts.port else "")
+    extensions = {"sni_hostname": hostname} if parts.scheme == "https" else {}
+    return pinned_url, {"Host": host_header}, extensions
 
 
 async def fetch_public_resource(
@@ -81,7 +113,7 @@ async def fetch_public_resource(
     allowed_domain: str | None = None,
 ) -> tuple[bytes, str, int, httpx.Headers]:
     """Fetch a public resource, validating every redirect and bounding its body."""
-    current_url = await validate_public_url(url)
+    current_url, current_ip = await resolve_public_target(url)
     request_headers = {"User-Agent": USER_AGENT, "Accept": "*/*"}
     if headers:
         request_headers.update(headers)
@@ -102,14 +134,17 @@ async def fetch_public_resource(
                 if normalized_hostname != scope and not normalized_hostname.endswith(f".{scope}"):
                     raise ValueError("The redirect left the allowed crawl domain.")
 
-            async with client.stream("GET", current_url, headers=sign_request(current_url, signer_kind)) as response:
+            # connect to the address that was validated, not to whatever a second DNS lookup returns
+            request_url, host_header, extensions = _pinned_request(current_url, current_ip)
+            hop_headers = {**sign_request(current_url, signer_kind), **host_header}
+            async with client.stream("GET", request_url, headers=hop_headers, extensions=extensions) as response:
                 if response.is_redirect:
                     location = response.headers.get("location")
                     if not location:
                         raise ValueError("The website returned a redirect without a destination.")
                     if redirect_count == MAX_REDIRECTS:
                         raise ValueError("The website exceeded the redirect limit.")
-                    current_url = await validate_public_url(urljoin(current_url, location))
+                    current_url, current_ip = await resolve_public_target(urljoin(current_url, location))
                     continue
 
                 declared_length = response.headers.get("content-length")

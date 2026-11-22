@@ -1,3 +1,4 @@
+import socket
 import unittest
 from unittest.mock import AsyncMock, patch
 
@@ -136,7 +137,7 @@ class PublicFetchSecurityTests(unittest.IsolatedAsyncioTestCase):
         async def validate_url(value):
             if "127.0.0.1" in value:
                 raise ValueError("Private and local addresses cannot be audited.")
-            return value
+            return value, None
 
         original_client = httpx.AsyncClient
 
@@ -144,7 +145,7 @@ class PublicFetchSecurityTests(unittest.IsolatedAsyncioTestCase):
             kwargs["transport"] = httpx.MockTransport(handler)
             return original_client(**kwargs)
 
-        with patch("backend.seo_geo_audit.validate_public_url", new=AsyncMock(side_effect=validate_url)), \
+        with patch("backend.seo_geo_audit.resolve_public_target", new=AsyncMock(side_effect=validate_url)), \
              patch("backend.seo_geo_audit.httpx.AsyncClient", side_effect=create_mock_client):
             with self.assertRaisesRegex(ValueError, "Private and local"):
                 await fetch_public_resource("https://example.com/")
@@ -160,10 +161,41 @@ class PublicFetchSecurityTests(unittest.IsolatedAsyncioTestCase):
             )
             return original_client(**kwargs)
 
-        with patch("backend.seo_geo_audit.validate_public_url", new=AsyncMock(side_effect=lambda value: value)), \
+        with patch("backend.seo_geo_audit.resolve_public_target", new=AsyncMock(side_effect=lambda value: (value, None))), \
              patch("backend.seo_geo_audit.httpx.AsyncClient", side_effect=create_mock_client):
             with self.assertRaisesRegex(ValueError, "size limit"):
                 await fetch_public_resource("https://example.com/", max_bytes=8)
+
+    async def test_connection_goes_to_the_validated_address_dns_rebinding(self):
+        """The hostname is resolved once per hop; the request is sent to that IP with the real Host and SNI,
+        so a DNS answer that changes to 127.0.0.1 afterwards is never used."""
+        seen = []
+        answers = iter([[(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 443))],
+                        [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("127.0.0.1", 443))]])
+
+        def handler(request):
+            seen.append((request.url.host, request.headers.get("host"), request.extensions.get("sni_hostname")))
+            return httpx.Response(200, content=b"ok")
+
+        original_client = httpx.AsyncClient
+
+        def create_mock_client(**kwargs):
+            kwargs["transport"] = httpx.MockTransport(handler)
+            return original_client(**kwargs)
+
+        with patch("backend.seo_geo_audit.socket.getaddrinfo", side_effect=lambda *a, **k: next(answers)), \
+             patch("backend.seo_geo_audit.httpx.AsyncClient", side_effect=create_mock_client):
+            body, final_url, status, _ = await fetch_public_resource("https://rebind.example/")
+        self.assertEqual((body, final_url, status), (b"ok", "https://rebind.example/", 200))
+        self.assertEqual(seen, [("93.184.216.34", "rebind.example", "rebind.example")])
+
+    def test_pinned_request_keeps_hostname_for_host_header_and_tls(self):
+        from backend.seo_geo_audit import _pinned_request
+        self.assertEqual(_pinned_request("https://www.a.nl/p?q=1", "203.0.113.5"),
+                         ("https://203.0.113.5/p?q=1", {"Host": "www.a.nl"}, {"sni_hostname": "www.a.nl"}))
+        self.assertEqual(_pinned_request("http://a.nl/", "2001:db8::1")[0], "http://[2001:db8::1]/")
+        self.assertEqual(_pinned_request("http://a.nl/", "2001:db8::1")[2], {})            # no TLS: no SNI
+        self.assertEqual(_pinned_request("https://a.nl/", None), ("https://a.nl/", {}, {}))
 
 
 if __name__ == "__main__":
