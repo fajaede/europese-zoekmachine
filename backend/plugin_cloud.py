@@ -25,6 +25,9 @@ payload: {"v": 1, "domain": "example.nl", "plan": "free|pro|premium|agency|enter
 
   GET  /api/plugin/competitors   sites in your sector that score just above/below you, the leader, and
       where they are ahead (pro and higher; from the Fajaede benchmark, like psa.fajaede.nl)
+
+  GET  /api/plugin/history       authority per Common Crawl release, benchmark scores over time and new links
+      per month (pro and higher)
 """
 
 from __future__ import annotations
@@ -48,6 +51,7 @@ from pydantic import BaseModel, Field
 
 from backend.benchmark import authority, backlinks, rules, site_audit, store, worker
 from backend.benchmark.competitors import METRICS as COMPETITOR_METRICS, find_competitors
+from backend.benchmark.competitors import overall as competitor_overall
 from backend.benchmark.routes import _latest_rows, add_authority, cohort_label
 from backend.seo_geo_audit import SCAN_TOKEN, SCAN_USER_AGENT, validate_public_url
 
@@ -178,8 +182,14 @@ def authority_report(domain: str, plan: str) -> dict[str, Any]:
         "authority": {"score": found["score"], "rank": found["rank"], "of": found["of"]} if found else None,
         "links": None, "locked": plan not in PAID,
     }
+    links = (backlinks.lookup(domain) or {}) if covered else {}
+    if found and release:
+        try:
+            authority.record_history(domain, release, found["score"], found["rank"],
+                                     links.get("referring_domains"), links.get("referring_local"))
+        except sqlite3.Error:
+            pass                                       # history is a bonus: never fail the report for it
     if plan in PAID and covered:
-        links = backlinks.lookup(domain) or {}
         report["links"] = {
             "referring_domains": links.get("referring_domains", 0 if info.get("last_backlinks") else None),
             "referring_local": links.get("referring_local", 0 if info.get("last_backlinks") else None),
@@ -337,3 +347,62 @@ async def plugin_competitors(authorization: str | None = Header(default=None)) -
     ticket = verify_ticket(authorization)
     _rate_limit(ticket["domain"])
     return await asyncio.to_thread(competitors_report, ticket["domain"], ticket["plan"])
+
+
+# --- history --------------------------------------------------------------------------------
+
+HISTORY_SCORES = 24      # benchmark measurements shown
+HISTORY_MONTHS = 12      # months of new links
+
+
+def _score_history(domain: str) -> list[dict[str, Any]]:
+    _benchmark_store()
+    with store.connect() as conn:
+        rows = conn.execute(
+            "SELECT s.psa_score, s.seo_score, s.geo_score, s.ai_visibility_score, s.calculated_at FROM scores s"
+            " JOIN domains d ON d.id = s.domain_id WHERE d.root_domain=? ORDER BY s.calculated_at DESC LIMIT ?",
+            (domain, HISTORY_SCORES)).fetchall()
+    points = []
+    for row in reversed(rows):
+        scores = {"psa": row["psa_score"], "seo": row["seo_score"], "geo": row["geo_score"], "ai": row["ai_visibility_score"]}
+        points.append({"date": row["calculated_at"][:10], "overall": competitor_overall(scores),
+                       **{k: (round(v) if v is not None else None) for k, v in scores.items()}})
+    return points
+
+
+def _new_links_per_month(domain: str, now: datetime | None = None) -> list[dict[str, Any]]:
+    """New referring sites per month from the own index (the same sites the Links card counts)."""
+    now = now or datetime.now(timezone.utc)
+    months = []
+    year, month = now.year, now.month
+    for _ in range(HISTORY_MONTHS):
+        months.append(f"{year:04d}-{month:02d}")
+        year, month = (year, month - 1) if month > 1 else (year - 1, 12)
+    months.reverse()
+    _benchmark_store()
+    with store.connect() as conn:
+        rows = conn.execute("SELECT source_domain, first_seen_at FROM links WHERE target_domain=?", (domain,)).fetchall()
+    rows = [r for r in rows if r["source_domain"].rsplit(".", 1)[-1] in COVERED_TLDS]
+    in_cc = authority.known(r["source_domain"] for r in rows)
+    counts: dict[str, int] = defaultdict(int)
+    for row in rows:
+        if row["source_domain"] not in in_cc:
+            counts[row["first_seen_at"][:7]] += 1
+    return [{"month": m, "count": counts.get(m, 0)} for m in months]
+
+
+def history_report(domain: str, plan: str) -> dict[str, Any]:
+    covered = domain.rsplit(".", 1)[-1] in COVERED_TLDS
+    report: dict[str, Any] = {"domain": domain, "plan": plan, "covered": covered, "locked": plan not in PAID}
+    if report["locked"] or not covered:
+        return report
+    report.update(authority=authority.history(domain), scores=_score_history(domain),
+                  new_links=_new_links_per_month(domain))
+    return report
+
+
+@router.get("/history")
+async def plugin_history(authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    ticket = verify_ticket(authorization)
+    _rate_limit(ticket["domain"])
+    return await asyncio.to_thread(history_report, ticket["domain"], ticket["plan"])

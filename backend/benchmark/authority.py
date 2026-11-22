@@ -61,6 +61,18 @@ CREATE TABLE IF NOT EXISTS authority (
     score INTEGER                     -- 0-100, filled in when the import finishes
 );
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+-- Authority per Common Crawl release for the domains that ask for it (plugin sites): history for the
+-- "History" card. Survives imports (only `authority` and `backlinks` are replaced).
+CREATE TABLE IF NOT EXISTS authority_history (
+    domain TEXT NOT NULL,
+    release TEXT NOT NULL,
+    score INTEGER,
+    rank INTEGER,
+    referring INTEGER,
+    referring_local INTEGER,
+    recorded_at TEXT NOT NULL,
+    PRIMARY KEY (domain, release)
+);
 """
 
 
@@ -360,6 +372,32 @@ def lookup(domains: Iterable[str], path: str | None = None) -> dict[str, dict[st
                             "rank": row["local_rank"] if row["hc_val"] > 0 else None,
                             "of": totals.get(row["tld"]) if row["hc_val"] > 0 else None}
             for row in rows}
+
+
+def record_history(domain: str, release: str, score: int | None, rank: int | None, referring: int | None,
+                   referring_local: int | None, path: str | None = None) -> None:
+    """Remember this release's values for a domain (the first recording time is kept)."""
+    with connect(path) as conn:
+        conn.execute(SCHEMA[SCHEMA.index("CREATE TABLE IF NOT EXISTS authority_history"):])   # also on older databases
+        conn.execute(
+            "INSERT INTO authority_history (domain, release, score, rank, referring, referring_local, recorded_at)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(domain, release) DO UPDATE SET score=excluded.score,"
+            " rank=excluded.rank, referring=excluded.referring, referring_local=excluded.referring_local",
+            (domain, release, score, rank, referring, referring_local, _now()))
+
+
+def history(domain: str, path: str | None = None) -> list[dict[str, Any]]:
+    """All recorded releases for a domain, oldest first."""
+    if not os.path.exists(path or DB_PATH):
+        return []
+    try:
+        with connect(path) as conn:
+            rows = conn.execute("SELECT release, score, rank, referring, referring_local, recorded_at FROM authority_history"
+                                " WHERE domain=? ORDER BY recorded_at, release", (domain,)).fetchall()
+    except sqlite3.OperationalError:
+        return []
+    return [{"release": r["release"], "score": r["score"], "rank": r["rank"], "referring_domains": r["referring"],
+             "referring_local": r["referring_local"], "recorded_at": r["recorded_at"]} for r in rows]
 
 
 def known(domains: Iterable[str], path: str | None = None) -> set[str]:
