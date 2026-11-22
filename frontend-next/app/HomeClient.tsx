@@ -825,7 +825,7 @@ export default function Home() {
 
         <section aria-label="PSA Trust Badge" className="mt-10">
           <a
-            href="https://psa.fajaede.nl/report/PSA-JEYU84"
+            href="https://psa.fajaede.nl/report/PSA-4GRPTX"
             target="_blank"
             rel="noopener"
             title="PSA Trust Badge - bekijk het rapport"
@@ -833,7 +833,7 @@ export default function Home() {
           >
             {/* eslint-disable-next-line @next/next/no-img-element -- external SVG badge, no optimisation needed */}
             <img
-              src="https://psa.fajaede.nl/embed/psa?id=PSA-JEYU84"
+              src="https://psa.fajaede.nl/embed/psa?id=PSA-4GRPTX"
               width={140}
               height={140}
               alt="PSA Trust Badge"
