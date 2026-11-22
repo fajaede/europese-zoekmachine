@@ -113,6 +113,36 @@ class CrawlTests(unittest.TestCase):
         self.assertIn("https://x.nl/ → https://x.nl/oud", found["redirect_link"]["urls"])
         self.assertIn("sitemap_problem", found)                              # no sitemap.xml
 
+    def test_downloads_and_wordpress_system_files_are_not_pages(self):
+        words = "woord " * 400
+        home = (f"<html lang='nl'><title>Home</title><h1>Home</h1>{words}"
+                '<a href="/download.php">zip</a><a href="/brochure.php">pdf</a><a href="/over">over</a>'
+                '<a href="/wp-login.php?action=lostpassword">login</a><a href="/readme.html">readme</a>'
+                '<a href="/license.txt">licentie</a><a href="/xmlrpc.php">rpc</a></html>')
+        pages = {
+            "https://x.nl/": (200, home, "text/html"),
+            "https://x.nl/over": (200, f"<title>Over</title><h1>Over</h1>{words}", "text/html"),
+            "https://x.nl/brochure.php": (200, "%PDF-1.7", "application/pdf"),
+        }
+        fetch = fake_site(pages)
+        requested = []
+
+        async def with_big_download(url, domain, *, reasons=None, **kwargs):
+            requested.append(url)
+            if url == "https://x.nl/download.php":          # redirects to a zip larger than a page may be
+                reasons.append("failed: page too large")
+                return None
+            return await fetch(url, domain, reasons=reasons, **kwargs)
+
+        with patch.object(worker, "fetch", with_big_download), patch.object(worker, "PAGE_DELAY_SECONDS", 0):
+            report = asyncio.run(site_audit.crawl_site("https://x.nl/", 20))
+        urls = [p["url"] for p in report["pages"]]
+        self.assertEqual(urls, ["https://x.nl/", "https://x.nl/over"])
+        self.assertNotIn("broken_link", codes(report))
+        self.assertNotIn("http_error", codes(report))
+        for system in ("wp-login.php", "readme.html", "license.txt", "xmlrpc.php"):
+            self.assertFalse(any(system in u for u in requested), f"{system} is not fetched")
+
     def test_blocked_homepage_raises_clear_error(self):
         with patch.object(worker, "fetch", fake_site({"https://x.nl/": (403, "", "text/html")})):
             with self.assertRaisesRegex(ValueError, "weigert onze scanner"):

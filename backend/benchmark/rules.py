@@ -123,7 +123,10 @@ def candidate_cohorts(rows: list[Any], domain: str, category: str | None) -> tup
 
 # --- URL priority -------------------------------------------------------------------------
 
-_SKIP_EXT = re.compile(r"\.(pdf|jpe?g|png|gif|webp|svg|ico|zip|gz|mp4|mp3|css|js|xml|json|docx?|xlsx?)$", re.I)
+_SKIP_EXT = re.compile(r"\.(pdf|jpe?g|png|gif|webp|svg|ico|zip|gz|mp4|mp3|css|js|xml|json|txt|docx?|xlsx?)$", re.I)
+# WordPress system files: not pages of the site (login, API, installation docs)
+_WP_SYSTEM = re.compile(r"/(wp-login\.php|wp-signup\.php|wp-activate\.php|wp-cron\.php|wp-trackback\.php|xmlrpc\.php"
+                        r"|readme\.html|wp-json|wp-includes|wp-content/plugins)(/|$)", re.I)
 _BAD_PATH = re.compile(r"/(wp-admin|wp-login|login|inloggen|account|cart|winkelwagen|checkout|afrekenen|zoeken|search)(/|$)", re.I)
 _ARCHIVE = re.compile(r"/(tag|tags|category|categorie|author|auteur|page|pagina)/", re.I)
 _SESSION = {"sessionid", "sid", "phpsessid", "utm_source", "utm_medium", "utm_campaign", "gclid", "fbclid",
@@ -139,7 +142,8 @@ _TYPES = [
 
 def is_crawlable_url(url: str) -> bool:
     parts = urlsplit(url)
-    return parts.scheme in {"http", "https"} and not _SKIP_EXT.search(parts.path) and not _BAD_PATH.search(parts.path)
+    return (parts.scheme in {"http", "https"} and not _SKIP_EXT.search(parts.path) and not _BAD_PATH.search(parts.path)
+            and not _WP_SYSTEM.search(parts.path))
 
 
 MAX_INLINK_BONUS = 15

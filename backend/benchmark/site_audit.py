@@ -252,6 +252,7 @@ async def crawl_site(url: str, max_pages: int) -> dict[str, Any]:
     frontier = await asyncio.to_thread(worker.build_frontier, final_url, html, sitemap, host, parser, {}, False,
                                        None, SCAN_TOKEN)
     seen = {_norm(final_url)}
+    files: set[str] = set()                   # links that turned out to be downloads, not pages
     attempts = 0
     while len(pages) < max_pages and attempts < max_pages * 2:
         next_url = frontier.pop()
@@ -263,16 +264,22 @@ async def crawl_site(url: str, max_pages: int) -> dict[str, Any]:
         if result is None:
             if reasons and reasons[0].startswith("redirect"):
                 continue                      # left the site: not a page of this site
+            if reasons and reasons[0] == "failed: page too large":
+                files.add(_norm(next_url))    # a big download (zip, pdf, ...) behind a link: reachable, not a page
+                continue
             pages.append({"url": next_url, "requested_url": next_url, "status": None, "error": reasons[0] if reasons else None})
             continue
         if _norm(result[2]) in seen:
             continue                          # redirect to a page we already have
+        if result[0] < 400 and "html" not in result[3].get("content-type", "html").lower():
+            files.add(_norm(next_url))        # a file (pdf, zip, ...) served by a script: reachable, not a page
+            continue
         seen.add(_norm(result[2]))
         record = await asyncio.to_thread(_page_record, next_url, result, ms, host)
         pages.append(record)
         frontier.link_from(record["url"], set(record.get("links") or []))
 
-    crawled = {_norm(p["url"]) for p in pages} | {_norm(p.get("requested_url") or p["url"]) for p in pages}
+    crawled = {_norm(p["url"]) for p in pages} | {_norm(p.get("requested_url") or p["url"]) for p in pages} | files
     unchecked = sorted({link for p in pages for link in p.get("links") or [] if _norm(link) not in crawled
                         and rules.is_crawlable_url(link)})[:LINK_CHECK_LIMIT]
     link_status: dict[str, int | None] = {}
