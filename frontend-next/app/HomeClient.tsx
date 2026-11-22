@@ -823,20 +823,24 @@ export default function Home() {
           </div>
         )}
 
-        <section
-          aria-label="PSA"
-          className="mt-10 h-21 w-21 overflow-hidden rounded-xl opacity-70 transition-opacity hover:opacity-100"
-        >
-          <iframe
-            src="https://psa.fajaede.nl/embed/psa?id=PSA-4GRPTX"
-            width="140"
-            height="140"
-            frameBorder="0"
-            scrolling="no"
-            title="Fajaede PSA"
-            loading="lazy"
-            className="block origin-top-left scale-[0.6] overflow-hidden border-0"
-          />
+        <section aria-label="PSA Trust Badge" className="mt-10">
+          <a
+            href="https://psa.fajaede.nl/report/PSA-JEYU84"
+            target="_blank"
+            rel="noopener"
+            title="PSA Trust Badge - bekijk het rapport"
+            className="inline-block rounded-xl opacity-80 transition-opacity hover:opacity-100 focus-visible:opacity-100"
+          >
+            {/* eslint-disable-next-line @next/next/no-img-element -- external SVG badge, no optimisation needed */}
+            <img
+              src="https://psa.fajaede.nl/embed/psa?id=PSA-JEYU84"
+              width={140}
+              height={140}
+              alt="PSA Trust Badge"
+              loading="lazy"
+              style={{ border: 0 }}
+            />
+          </a>
         </section>
       </div>
     </main>
