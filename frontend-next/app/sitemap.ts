@@ -2,7 +2,7 @@ import type { MetadataRoute } from "next";
 
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   // Gebruik de officiële domeinnaam uit de environment variables, met een fallback.
-  const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || "https://fajaede.eu";
+  const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || "https://www.fajaede.eu";
   // Static routes always included
   const staticRoutes: MetadataRoute.Sitemap = [
     {

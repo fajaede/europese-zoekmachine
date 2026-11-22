@@ -1,0 +1,22 @@
+# fajaede.eu
+
+> Europese zoekmachine zonder tracking of profilering, plus een websitebuilder met AI en een Developer API. Gemaakt door fajaede, België.
+
+## Belangrijkste pagina's
+
+- [Zoekmachine](https://www.fajaede.eu/): zoeken in een eigen Europese index, zonder tracking, profilering of advertentieprofielen.
+- [Website Builder](https://www.fajaede.eu/builder): een complete website laten maken met AI. Kies een stijl, beschrijf je bedrijf en ontvang je site; de eerste website is gratis.
+- [Developer API](https://api.fajaede.eu/docs): SEO/GEO-audits en site-audits in je eigen software, met een persoonlijke API-key.
+
+## Juridisch
+
+- [Privacybeleid](https://www.fajaede.eu/privacy-policy)
+- [Cookiebeleid](https://www.fajaede.eu/cookie-policy)
+- [Algemene voorwaarden](https://www.fajaede.eu/algemene-voorwaarden)
+
+## Andere producten van fajaede
+
+- [FajaedeSEO AI](https://www.fajaede.nl/): WordPress-plugin voor SEO en GEO, met Fajaede Cloud (autoriteit en backlinks).
+- [psa.fajaede.nl](https://psa.fajaede.nl/): gratis scan op privacy, beveiliging, SEO en AI-vindbaarheid.
+
+Contact: info@fajaede.nl

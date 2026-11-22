@@ -1,4 +1,11 @@
+import type { Metadata } from "next";
 import Link from "next/link";
+
+export const metadata: Metadata = {
+  title: "Privacybeleid | fajaede.eu",
+  description: "Welke gegevens fajaede.eu, de Builder en de Developer API verwerken, waarom, hoe lang en met wie, en welke rechten u heeft.",
+  alternates: { canonical: "/privacy-policy" },
+};
 
 export default function PrivacyPolicy() {
   return (

@@ -264,6 +264,20 @@ def read_root():
     return RedirectResponse(url="/docs")
 
 
+ROBOTS_TXT = """User-agent: *
+Allow: /docs
+Allow: /developers
+Allow: /.well-known/
+Disallow: /
+"""
+
+
+@app.get("/robots.txt", include_in_schema=False)
+def robots_txt():
+    """API host: only the documentation and the developer page belong in search results."""
+    return Response(content=ROBOTS_TXT, media_type="text/plain")
+
+
 
 @app.get("/developers", response_class=HTMLResponse)
 async def developer_dashboard():

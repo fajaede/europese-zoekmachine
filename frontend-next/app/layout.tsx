@@ -13,24 +13,20 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
-const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || "https://fajaede.eu";
+const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || "https://www.fajaede.eu";
+
+const description = "Europese zoekmachine zonder tracking of profilering, plus een websitebuilder met AI. Zoek veilig en neutraal in een eigen Europese index.";
 
 export const metadata: Metadata = {
-  title: "fajaedeseo AI",
-  description: "fajaedeAI is een Europese zoekmachine die uw privacy respecteert en relevante resultaten levert.",
+  title: "fajaede.eu | Europese zoekmachine zonder tracking",
+  description,
   metadataBase: new URL(siteUrl),
-  alternates: {
-    canonical: siteUrl,
-  },
   icons: {
     icon: "/icon-48x48.png",
   },
   openGraph: {
-    title: "fajaedeseo AI",
-    description: "fajaedeAI is een Europese zoekmachine die uw privacy respecteert en relevante resultaten levert.",
-    siteName: "fajaede1",
+    siteName: "fajaede.eu",
     type: "website",
-    url: siteUrl,
     locale: "nl_NL",
     images: [
       {
@@ -43,22 +39,20 @@ export const metadata: Metadata = {
   },
   twitter: {
     card: "summary_large_image",
-    title: "fajaedeseo AI-services voor SEO ",
-    description: "fajaedeAI is een Europese zoekmachine die uw privacy respecteert en relevante resultaten levert.",
+    title: "fajaede.eu | Europese zoekmachine zonder tracking",
+    description,
     site: "@fajaedesr",
     creator: "@fajaedesr",
   },
   other: {
     "fb:app_id": "567594986640691",
-    "geo.placename": "Belgie",
-    "geo.region": "Brussel",
-    "geo.position": "50.8386;4.3761",
-    "ICBM": "50.8386, 4.3761",
+    "geo.placename": "Berchem, Antwerpen",
+    "geo.region": "BE-VAN",
+    "geo.position": "51.1906;4.4304",
+    "ICBM": "51.1906, 4.4304",
     "Fajaede": "Martinn Margaritha",
     "twitter:label1": "Written by",
     "twitter:data1": "Martinn Margaritha",
-    "twitter:label2": "Est. reading time",
-    "twitter:data2": "",
   },
   robots: {
     index: true,
@@ -83,12 +77,12 @@ export default function RootLayout({
 }>) {
   return (
     <html
-      lang="en"
+      lang="nl"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
       <head>
         {/* Start FajaedeSEO AI+ */}
-        <meta itemProp="description" content="fajaedeAI is een Europese zoekmachine die uw privacy respecteert en relevante resultaten levert." />
+        <meta itemProp="description" content={description} />
         <meta itemProp="image" content="/images/eu.jpg" />
         <meta property="fb:pages" content="fajaede1" />
         <meta property="fb:admins" content="fajaede1" />
@@ -101,9 +95,22 @@ export default function RootLayout({
               "@context": "https://schema.org",
               "@graph": [
                 {
+                  "@type": "Organization",
+                  "@id": "https://www.fajaede.nl/#organization",
+                  "name": "fajaede",
+                  "url": "https://www.fajaede.nl/",
+                  "email": "info@fajaede.nl",
+                  "address": { "@type": "PostalAddress", "addressLocality": "Berchem", "addressRegion": "Antwerpen", "postalCode": "2600", "addressCountry": "BE" },
+                  "sameAs": ["https://www.fajaede.eu/", "https://psa.fajaede.nl/", "https://github.com/fajaede"]
+                },
+                {
                   "@type": "WebSite",
-                  "name": "fajaedeseo AI",
-                  "url": siteUrl
+                  "@id": `${siteUrl}/#website`,
+                  "name": "fajaede.eu",
+                  "url": siteUrl,
+                  "inLanguage": "nl",
+                  "description": description,
+                  "publisher": { "@id": "https://www.fajaede.nl/#organization" }
                 },
                 {
                   "@type": "FAQPage",
@@ -127,7 +134,7 @@ export default function RootLayout({
                   ]
                 }
               ]
-            })
+            }).replace(/</g, "\\u003c")
           }}
         />
       </head>
