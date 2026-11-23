@@ -256,7 +256,7 @@ def own_backlinks(conn: sqlite3.Connection, target: str, now: datetime | None = 
 def discovery_room(conn: sqlite3.Connection, now: datetime | None = None) -> int:
     """How many more domains may be queued today from discovered links."""
     day = (now or datetime.now(timezone.utc)).replace(hour=0, minute=0, second=0, microsecond=0)
-    used = conn.execute("SELECT COUNT(*) FROM domains WHERE source='link' AND first_seen_at>=?",
+    used = conn.execute("SELECT COUNT(*) FROM domains WHERE source IN ('link', 'redirect') AND first_seen_at>=?",
                         (now_iso(day),)).fetchone()[0]
     return max(0, DISCOVERY_PER_DAY - used)
 

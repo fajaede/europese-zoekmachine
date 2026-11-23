@@ -28,6 +28,14 @@ CRAWLER_USER_AGENT = f"Mozilla/5.0 (compatible; {CRAWLER_TOKEN}/1.0; +https://ps
 USER_AGENT = SCAN_USER_AGENT  # default: the audit endpoint runs on request
 
 
+class RedirectLeftDomain(ValueError):
+    """The site redirected to another domain; `target` is that URL (used to discover the new site)."""
+
+    def __init__(self, target: str):
+        super().__init__("The redirect left the allowed crawl domain.")
+        self.target = target
+
+
 def _resolve_public_target(value: str) -> tuple[str, str]:
     """Validate a URL and return (normalised url, the public IP address to connect to). Requests are then
     sent to exactly that address (see fetch_public_resource), so a second DNS lookup cannot point the
@@ -132,7 +140,7 @@ async def fetch_public_resource(
                 scope = allowed_domain.lower().removeprefix("www.").rstrip(".")
                 normalized_hostname = (hostname or "").lower().removeprefix("www.").rstrip(".")
                 if normalized_hostname != scope and not normalized_hostname.endswith(f".{scope}"):
-                    raise ValueError("The redirect left the allowed crawl domain.")
+                    raise RedirectLeftDomain(current_url)
 
             # connect to the address that was validated, not to whatever a second DNS lookup returns
             request_url, host_header, extensions = _pinned_request(current_url, current_ip)

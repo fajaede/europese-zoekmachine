@@ -36,6 +36,7 @@ MIN_COHORT_SIZE = int(os.getenv("BENCHMARK_MIN_COHORT", "30"))
 # Growing pause after consecutive failures: index = number of earlier failures (last value repeats).
 BACKOFF_DAYS: list[tuple[tuple[str, ...], list[int]]] = [
     (("blocked: HTTP 429", "blocked: HTTP 503"), [1, 3, 7, 30]),   # rate limited / overloaded: retry soon
+    (("blocked: HTTP 403",), [1, 7, 30, 90]),                       # often a CDN limit for a moment (2026-11 check: 37/40 fine a day later)
     (("blocked",), [7, 30, 90]),                                   # 403, 401, robots.txt
     (("redirect",), [90]),                                         # alias of another domain
     (("failed",), [1, 7, 30, 90]),                                 # dns, timeout, tls, ...

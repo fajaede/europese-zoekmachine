@@ -268,7 +268,7 @@ class StoreTests(unittest.TestCase):
     def test_backoff_grows_and_resets(self):
         with store.connect(self.path) as conn:
             days, row = self._fail_then(conn, "b.nl", ["blocked: HTTP 403"] * 4)
-            self.assertEqual(days, [7, 30, 90, 90])
+            self.assertEqual(days, [1, 7, 30, 90])
             self.assertEqual((row["index_status"], row["fail_count"]), ("blocked", 4))
             days, _ = self._fail_then(conn, "r.nl", ["blocked: HTTP 429"] * 5)
             self.assertEqual(days, [1, 3, 7, 30, 30])
@@ -314,7 +314,7 @@ class StoreTests(unittest.TestCase):
             self._fail_then(conn, "x.nl", ["blocked: HTTP 403"])
             queue = store.queue_overview(conn, NOW)
             self.assertEqual(queue["jobs_by_status"].get("done"), 3)
-            self.assertEqual(queue["domains_in_backoff"], {"≤7 dagen": 1})
+            self.assertEqual(queue["domains_in_backoff"], {"≤1 dag": 1})   # 403: retried after a day (rules.BACKOFF_DAYS)
             stats = store.index_stats(conn)
             self.assertEqual(stats["by_status"]["ok"], 3)
             self.assertIn("NL:mkb", stats["cohorts_below_minimum"])

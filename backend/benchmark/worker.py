@@ -21,7 +21,8 @@ import httpx
 from bs4 import BeautifulSoup
 
 from backend.benchmark import authority, ccdomains, rules, signals, store
-from backend.seo_geo_audit import CRAWLER_TOKEN, CRAWLER_USER_AGENT, audit_seo_geo, fetch_public_resource
+from backend.seo_geo_audit import (CRAWLER_TOKEN, CRAWLER_USER_AGENT, RedirectLeftDomain, audit_seo_geo,
+                                   fetch_public_resource)
 
 PAGE_DELAY_SECONDS = float(os.getenv("BENCHMARK_PAGE_DELAY", "1.0"))   # politeness per domain
 CONCURRENCY = int(os.getenv("BENCHMARK_CONCURRENCY", "4"))             # domains in parallel
@@ -66,7 +67,8 @@ def failure_reason(exc: BaseException) -> str:
 
 
 async def fetch(url: str, domain: str, *, max_bytes: int = 2_000_000,
-                reasons: list[str] | None = None, user_agent: str = CRAWLER_USER_AGENT) -> FetchResult | None:
+                reasons: list[str] | None = None, user_agent: str = CRAWLER_USER_AGENT,
+                redirects: list[str] | None = None) -> FetchResult | None:
     """Safe fetch (public addresses only, redirects must stay on the domain). None on any
     failure; the reason is appended to `reasons` when given."""
     try:
@@ -78,6 +80,8 @@ async def fetch(url: str, domain: str, *, max_bytes: int = 2_000_000,
     except (ValueError, httpx.HTTPError, OSError) as exc:
         if reasons is not None:
             reasons.append(failure_reason(exc))
+        if redirects is not None and isinstance(exc, RedirectLeftDomain):
+            redirects.append(exc.target)
         return None
     return status, decode(body, headers), final_url, headers
 
@@ -325,13 +329,18 @@ async def crawl_domain(domain_row: dict[str, Any], known: dict[str, dict[str, An
 
     home = None
     reasons: list[str] = []
+    redirects: list[str] = []
     for start in (f"https://{host}/", f"http://{host}/"):
-        home = await fetch(start, domain, reasons=reasons)
+        home = await fetch(start, domain, reasons=reasons, redirects=redirects)
         if home:
             break
     if not home:
         # The HTTPS attempt says most (http:// often just redirects back to https).
         result["error"] = reasons[0] if reasons else "failed: homepage not reachable"
+        if redirects:
+            moved = registered_domain(urlsplit(redirects[0]).hostname or "")
+            if moved and moved != registered_domain(domain) and moved.rsplit(".", 1)[-1] in LINK_TLDS:
+                result["redirect_to"] = moved      # the site moved: crawl the new .nl/.be site instead
         return result
     status, html, final_url, headers = home
     if status in {401, 403, 429, 503}:
@@ -431,6 +440,15 @@ def _store_result(job: dict[str, Any], outcome: dict[str, Any]) -> None:
                          pages_unchanged=len(unchanged), homepage_hash=outcome.get("homepage_hash"),
                          error=outcome["error"])
         store_links(conn, job["root_domain"], outcome.get("links") or {})
+        queue_redirect_target(conn, outcome.get("redirect_to"))
+
+
+def queue_redirect_target(conn: Any, target: str | None) -> bool:
+    """A site that redirects to another .nl/.be domain: queue that domain once (within the daily discovery
+    budget). Known domains are left alone, so nothing is crawled twice."""
+    if not target or store.discovery_room(conn) <= 0:
+        return False
+    return store.add_domains(conn, [{"domain": target, "priority": 1}], "redirect") > 0
 
 
 def store_links(conn: Any, source: str, links: dict[str, tuple[str, bool]]) -> int:
