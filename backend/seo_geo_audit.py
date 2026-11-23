@@ -317,11 +317,20 @@ def _make_check(
     }
 
 
+def _not_applicable(code: str, label: str, weight: int, details: str) -> dict[str, Any]:
+    """A check that does not apply to this site: no points, and left out of both score and coverage."""
+    check = _make_check(code, label, weight, None, details)
+    check["not_applicable"] = True
+    return check
+
+
 def _score_checks(checks: list[dict[str, Any]]) -> tuple[int, int]:
-    assessed_weight = sum(check["max_points"] for check in checks if check["passed"] is not None)
-    earned_points = sum(check["points"] or 0 for check in checks)
+    applicable = [check for check in checks if not check.get("not_applicable")]
+    assessed_weight = sum(check["max_points"] for check in applicable if check["passed"] is not None)
+    earned_points = sum(check["points"] or 0 for check in applicable)
     score = round(earned_points * 100 / assessed_weight) if assessed_weight else 0
-    coverage = round(assessed_weight * 100 / sum(check["max_points"] for check in checks))
+    total_weight = sum(check["max_points"] for check in applicable)
+    coverage = round(assessed_weight * 100 / total_weight) if total_weight else 0
     return score, coverage
 
 
@@ -413,10 +422,24 @@ def audit_seo_geo(
         "legalservice", "realestateagent", "automotivebusiness", "foodestablishment",
         "lodgingbusiness", "financialservice", "dentist", "physician",
     }
+    # Online-only businesses say so with schema.org OnlineBusiness / OnlineStore. For them a local business
+    # type and a map do not apply; a plain Organization (often added by SEO plugins) still has to pass them.
+    online_types = {"onlinebusiness", "onlinestore"}
+    organization_types = online_types | {
+        "organization", "corporation", "ngo", "educationalorganization", "governmentorganization",
+        "medicalorganization", "newsmediaorganization", "sportsorganization", "researchorganization",
+    }
     local_entities = [entity for entity in entities if _schema_types(entity) & local_types]
     local_entities.extend(_microdata_local_entities(soup, local_types))
+    organization_entities = [
+        entity for entity in entities
+        if _schema_types(entity) & organization_types and not _schema_types(entity) & local_types
+    ]
+    online_business = not local_entities and any(_schema_types(entity) & online_types for entity in organization_entities)
+    # Address, phone, coordinates, region, profiles and NAP count for every business, local or online.
+    business_entities = local_entities + organization_entities
     local_address_entities = [
-        entity for entity in local_entities
+        entity for entity in business_entities
         if isinstance(entity.get("address"), dict)
         and all(
             str(entity["address"].get(field, "")).strip()
@@ -424,28 +447,28 @@ def audit_seo_geo(
         )
     ]
     coordinate_entities = [
-        entity for entity in local_entities
+        entity for entity in business_entities
         if isinstance(entity.get("geo"), dict)
         and entity["geo"].get("latitude") is not None
         and entity["geo"].get("longitude") is not None
     ]
     service_area_entities = [
-        entity for entity in local_entities
+        entity for entity in business_entities
         if entity.get("areaServed") or (
             isinstance(entity.get("address"), dict)
             and (entity["address"].get("addressRegion") or entity["address"].get("addressCountry"))
         )
     ]
-    same_as_entities = [entity for entity in local_entities if entity.get("sameAs")]
+    same_as_entities = [entity for entity in business_entities if entity.get("sameAs")]
     review_entities = [
         entity for entity in entities
         if _schema_types(entity) & {"review", "aggregaterating"}
     ] or [
-        entity for entity in local_entities
+        entity for entity in business_entities
         if entity.get("aggregateRating") or entity.get("review")
     ]
-    telephone_entities = [entity for entity in local_entities if str(entity.get("telephone", "")).strip()]
-    business_names = [str(entity.get("name", "")).strip() for entity in local_entities if str(entity.get("name", "")).strip()]
+    telephone_entities = [entity for entity in business_entities if str(entity.get("telephone", "")).strip()]
+    business_names = [str(entity.get("name", "")).strip() for entity in business_entities if str(entity.get("name", "")).strip()]
     address_element = soup.find("address")
     has_tel_link = any(str(link.get("href", "")).lower().startswith("tel:") for link in soup.find_all("a", href=True))
     map_urls = [
@@ -467,6 +490,9 @@ def audit_seo_geo(
     has_local_contact = bool(business_names and local_address_entities and telephone_entities)
 
     geo_checks = [
+        _not_applicable("local_business_schema", "Local business structured data", 20,
+                        "Not applicable: the site declares an online business (OnlineBusiness/OnlineStore).")
+        if online_business else
         _make_check("local_business_schema", "Local business structured data", 20, bool(local_entities),
                     "LocalBusiness-type JSON-LD found." if local_entities else "No LocalBusiness-type JSON-LD found."),
         _make_check("postal_address", "Complete postal address", 15, bool(local_address_entities) or visible_address,
@@ -475,6 +501,9 @@ def audit_seo_geo(
         _make_check("business_phone", "Business phone", 10, bool(telephone_entities) or has_tel_link,
                     "Structured business telephone or clickable tel: link found."
                     if telephone_entities or has_tel_link else "No structured business telephone or tel: link found."),
+        _not_applicable("map", "Map reference", 10,
+                        "Not applicable: the site declares an online business (OnlineBusiness/OnlineStore).")
+        if online_business and not has_map_link else
         _make_check("map", "Map reference", 10, has_map_link,
                     "A Google Maps link or embed was found." if has_map_link else "No Google Maps link or embed found."),
         _make_check("coordinates", "Geographic coordinates", 10, bool(coordinate_entities) or geo_meta,
@@ -484,13 +513,13 @@ def audit_seo_geo(
                     "A structured service area or business address region was found."
                     if service_area_entities else "No structured service area or business address region found."),
         _make_check("business_identity", "Business identity and profiles", 10, bool(business_names and same_as_entities),
-                    "A named local business includes sameAs profile links."
-                    if business_names and same_as_entities else "No named local business with sameAs profile links found."),
+                    "A named business includes sameAs profile links."
+                    if business_names and same_as_entities else "No named business with sameAs profile links found."),
         _make_check("reviews", "Review signals", 10, bool(review_entities),
                     "Review or aggregate-rating structured data found."
                     if review_entities else "No review or aggregate-rating structured data found."),
         _make_check("nap_markup", "Business name, address and phone", 5, has_local_contact,
-                    "Business name, complete structured address and phone are present in local-business markup."
+                    "Business name, complete structured address and phone are present in business markup."
                     if has_local_contact else "The page does not expose a name, complete structured address and phone together."),
     ]
 

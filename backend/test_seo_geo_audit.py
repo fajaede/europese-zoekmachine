@@ -49,6 +49,51 @@ class SeoGeoAuditTests(unittest.TestCase):
         self.assertEqual(result["coverage"], {"seo": 100, "geo": 100})
         self.assertEqual(result["issues"], {"seo": [], "geo": []})
 
+    @staticmethod
+    def _geo_checks(result):
+        return {check["code"]: check for check in result["scoring_breakdown"]["geo"]}
+
+    def _business_page(self, schema_type, with_map=False):
+        return f"""<html><head><script type="application/ld+json">
+        {{"@context":"https://schema.org","@graph":[{{"@type":"{schema_type}","name":"Webbureau",
+         "telephone":"+32498000000","sameAs":["https://www.linkedin.com/company/x"],
+         "address":{{"@type":"PostalAddress","streetAddress":"Straat 1","postalCode":"2600",
+          "addressLocality":"Berchem","addressCountry":"BE"}}}}]}}
+        </script></head><body>{'<a href="https://maps.google.com/?q=Berchem">Kaart</a>' if with_map else ''}</body></html>"""
+
+    def test_online_business_skips_local_type_and_map(self):
+        result = audit_seo_geo(self._business_page("OnlineBusiness"), "https://example.com/")
+        checks = self._geo_checks(result)
+        self.assertTrue(checks["local_business_schema"]["not_applicable"])
+        self.assertTrue(checks["map"]["not_applicable"])
+        for code in ("postal_address", "business_phone", "service_area", "business_identity", "nap_markup"):
+            self.assertTrue(checks[code]["passed"], code)
+        # Only coordinates (10) and reviews (10) missing out of the 70 points that apply.
+        self.assertEqual(result["geo_score"], round(50 * 100 / 70))
+        self.assertEqual(result["coverage"]["geo"], 100)
+        self.assertNotIn("local_business_schema", [c["code"] for c in result["issues"]["geo"]])
+
+    def test_online_business_with_map_gets_the_map_points(self):
+        checks = self._geo_checks(audit_seo_geo(self._business_page("OnlineStore", with_map=True), "https://example.com/"))
+        self.assertTrue(checks["map"]["passed"])
+        self.assertNotIn("not_applicable", checks["map"])
+
+    def test_plain_organization_still_needs_local_type_but_gets_contact_points(self):
+        result = audit_seo_geo(self._business_page("Organization"), "https://example.com/")
+        checks = self._geo_checks(result)
+        self.assertIs(checks["local_business_schema"]["passed"], False)
+        self.assertIs(checks["map"]["passed"], False)
+        self.assertTrue(checks["postal_address"]["passed"])
+        self.assertTrue(checks["business_identity"]["passed"])
+        self.assertEqual(result["geo_score"], 50)
+
+    def test_local_business_next_to_online_type_is_judged_as_local(self):
+        html = self._business_page("OnlineBusiness").replace(
+            '"@graph":[', '"@graph":[{"@type":"Store","name":"Winkel"},')
+        checks = self._geo_checks(audit_seo_geo(html, "https://example.com/"))
+        self.assertIs(checks["local_business_schema"]["passed"], True)
+        self.assertIs(checks["map"]["passed"], False)
+
     def test_invalid_sitemap_xml_fails_the_crawl_files_check(self):
         result = audit_seo_geo(
             "<html><body>Content</body></html>",
