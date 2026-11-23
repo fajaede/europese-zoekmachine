@@ -66,7 +66,7 @@ class Ranges:
 
 
 def read_vertices(lines: Iterable[bytes], conn: sqlite3.Connection,
-                  tlds: tuple[str, ...] = authority.TLDS, batch_size: int = 50_000) -> Ranges:
+                  tlds: tuple[str, ...] = authority.TLDS, batch_size: int = 50_000, bloom: Any = None) -> Ranges:
     """Find the id range per TLD and store (index, domain) in a temp table, in batches. The file is
     sorted by reversed domain, so the index is simply the order in which .nl/.be lines appear."""
     prefixes = tuple(f"{tld}.".encode() for tld in tlds)
@@ -78,6 +78,8 @@ def read_vertices(lines: Iterable[bytes], conn: sqlite3.Connection,
     for line in lines:
         node, _, rest = line.partition(b"	")
         rev = rest.partition(b"	")[0]
+        if bloom is not None and rev:
+            bloom.add_reversed(rev)          # every domain, any extension (ccdomains)
         prefix = rev[:3]
         if prefix not in prefixes:
             continue
@@ -206,7 +208,7 @@ def _insert(conn: sqlite3.Connection, batch: list[tuple[str, int, int, str]]) ->
 
 
 def import_backlinks(vertices: Iterable[bytes], edges: Iterable[bytes], release: str,
-                     path: str | None = None) -> dict[str, Any]:
+                     path: str | None = None, bloom: Any = None) -> dict[str, Any]:
     authority.init(path)
     started = time.monotonic()
     with authority.connect(path) as conn:
@@ -221,7 +223,7 @@ def import_backlinks(vertices: Iterable[bytes], edges: Iterable[bytes], release:
             authority._set_meta(conn, backlinks_lines=read)
             conn.commit()
 
-        ranges = read_vertices(vertices, conn)
+        ranges = read_vertices(vertices, conn, bloom=bloom)
         if not ranges.size:
             raise ValueError("No .nl/.be domains in the vertices file")
         scores = source_scores(conn, ranges.size)
@@ -243,7 +245,11 @@ def run_import(release: str | None = None, path: str | None = None) -> dict[str,
         raise ValueError("Run the authority import first: python -m backend.benchmark.authority import")
     authority.claim_import("backlinks", path)
     try:
-        return import_backlinks(_stream(release, "vertices"), _stream(release, "edges"), release, path)
+        from backend.benchmark import ccdomains
+        bloom = ccdomains.Builder()
+        summary = import_backlinks(_stream(release, "vertices"), _stream(release, "edges"), release, path, bloom)
+        bloom.save(ccdomains.PATH, release)       # "does Common Crawl know this site?" for every extension
+        return summary
     except BaseException as error:
         with authority.connect(path) as conn:
             authority._set_meta(conn, backlinks_running=False,

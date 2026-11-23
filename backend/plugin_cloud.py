@@ -49,7 +49,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel, Field
 
-from backend.benchmark import authority, backlinks, rules, site_audit, store, worker
+from backend.benchmark import authority, backlinks, ccdomains, rules, site_audit, store, worker
 from backend.benchmark.competitors import METRICS as COMPETITOR_METRICS, find_competitors
 from backend.benchmark.competitors import overall as competitor_overall
 from backend.benchmark.routes import _latest_rows, add_authority, cohort_label
@@ -144,10 +144,9 @@ def own_links(domain: str) -> dict[str, Any] | None:
             rows = [dict(row) for row in store.own_backlinks(conn, domain)]
     except sqlite3.Error:
         return None
-    # only .nl/.be sources: for those we can check the Common Crawl graph; a .com source may already be in
-    # Common Crawl's referring-domain count (it counts every extension), so it is never added on top
-    rows = [row for row in rows if row["source_domain"].rsplit(".", 1)[-1] in COVERED_TLDS]
-    in_cc = authority.known(row["source_domain"] for row in rows)
+    # any extension, but never a site Common Crawl already counts (.nl/.be via the ranks, others via the
+    # Bloom filter of the whole graph; without that filter other extensions are left out)
+    in_cc = ccdomains.counted_by_common_crawl(row["source_domain"] for row in rows)
     rows = [row for row in rows if row["source_domain"] not in in_cc]
     return {
         "referring_domains": len(rows),
@@ -222,9 +221,10 @@ async def check_reported_link(url: str, target: str) -> dict[str, Any]:
         return {"status": "invalid", "source": None}
     if source == target:
         return {"status": "own_site", "source": source}
-    if source.rsplit(".", 1)[-1] not in COVERED_TLDS:
-        return {"status": "not_covered", "source": source}
-    if await asyncio.to_thread(authority.known, [source]):
+    local = source.rsplit(".", 1)[-1] in COVERED_TLDS
+    if not local and not await asyncio.to_thread(ccdomains.available):
+        return {"status": "not_covered", "source": source}       # cannot rule out double counting yet
+    if await asyncio.to_thread(ccdomains.counted_by_common_crawl, [source]):
         return {"status": "in_common_crawl", "source": source}
     origin = f"{parts.scheme}://{parts.netloc}"
     robots = await worker.fetch(f"{origin}/robots.txt", source, max_bytes=500_000, user_agent=SCAN_USER_AGENT)
@@ -241,7 +241,8 @@ async def check_reported_link(url: str, target: str) -> dict[str, Any]:
         _benchmark_store()
         with store.connect() as conn:
             store.save_links(conn, source, {target: (page[2], links[target])}, verified=True)
-            store.add_domains(conn, [{"domain": source, "priority": 5}], "report")
+            if local:   # the benchmark crawl stays .nl/.be: other sites are never queued
+                store.add_domains(conn, [{"domain": source, "priority": 5}], "report")
 
     await asyncio.to_thread(save)
     return {"status": "added", "source": source, "nofollow": links[target]}
@@ -382,8 +383,7 @@ def _new_links_per_month(domain: str, now: datetime | None = None) -> list[dict[
     _benchmark_store()
     with store.connect() as conn:
         rows = conn.execute("SELECT source_domain, first_seen_at FROM links WHERE target_domain=?", (domain,)).fetchall()
-    rows = [r for r in rows if r["source_domain"].rsplit(".", 1)[-1] in COVERED_TLDS]
-    in_cc = authority.known(r["source_domain"] for r in rows)
+    in_cc = ccdomains.counted_by_common_crawl(r["source_domain"] for r in rows)
     counts: dict[str, int] = defaultdict(int)
     for row in rows:
         if row["source_domain"] not in in_cc:

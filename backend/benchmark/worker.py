@@ -20,7 +20,7 @@ from urllib.parse import urljoin, urlsplit
 import httpx
 from bs4 import BeautifulSoup
 
-from backend.benchmark import authority, rules, signals, store
+from backend.benchmark import authority, ccdomains, rules, signals, store
 from backend.seo_geo_audit import CRAWLER_TOKEN, CRAWLER_USER_AGENT, audit_seo_geo, fetch_public_resource
 
 PAGE_DELAY_SECONDS = float(os.getenv("BENCHMARK_PAGE_DELAY", "1.0"))   # politeness per domain
@@ -156,11 +156,18 @@ LINK_TLDS = ("nl", "be")
 MAX_EXTERNAL_LINKS = 200     # a page linking to more sites than this is a link list/farm: ignored
 
 
+_SECOND_LEVEL = {"co", "com", "org", "net", "gov", "ac", "edu", "ltd", "plc", "or", "ne", "go"}
+
+
 def registered_domain(host: str) -> str:
-    """'www.blog.Shop.nl' -> 'shop.nl': the domain level of the Common Crawl graph (.nl/.be have no
-    second-level registrations worth handling here)."""
+    """'www.blog.Shop.nl' -> 'shop.nl': the domain level of the Common Crawl graph. Outside .nl/.be a
+    second-level registration such as shop.co.uk or shop.com.au stays one site."""
     labels = [part for part in host.lower().rstrip(".").split(".") if part]
-    return ".".join(labels[-2:]) if len(labels) >= 2 else ""
+    if len(labels) < 2:
+        return ""
+    if len(labels) >= 3 and labels[-1] not in LINK_TLDS and labels[-2] in _SECOND_LEVEL:
+        return ".".join(labels[-3:])
+    return ".".join(labels[-2:])
 
 
 def external_links(html: str, base_url: str, own_domain: str) -> dict[str, bool]:
@@ -427,11 +434,12 @@ def _store_result(job: dict[str, Any], outcome: dict[str, Any]) -> None:
 
 
 def store_links(conn: Any, source: str, links: dict[str, tuple[str, bool]]) -> int:
-    """Own link index. Sources in the Common Crawl graph are skipped (their links are counted there already).
-    Targets Common Crawl does not know are queued for a crawl (capped per day): new sites to discover.
+    """Own link index. Sources Common Crawl knows are skipped, whatever their extension (their links are
+    counted there already). Targets Common Crawl does not know are queued for a crawl (capped per day):
+    new .nl/.be sites to discover; other extensions are never queued (no benchmark pollution).
     Returns the number of links stored."""
     source = registered_domain(source)
-    if not links or source.rsplit(".", 1)[-1] not in LINK_TLDS or authority.known([source]):
+    if not links or not source or ccdomains.counted_by_common_crawl([source]):
         return 0
     store.save_links(conn, source, links)
     unknown = sorted(set(links) - authority.known(links))

@@ -95,3 +95,6 @@ backend/benchmark.db-shm
 backend/authority.db
 backend/authority.db-wal
 backend/authority.db-shm
+
+# Common Crawl domain filter (backend/benchmark/ccdomains.py), built on the server
+cc-domains.bloom*
