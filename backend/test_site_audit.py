@@ -161,7 +161,7 @@ class JobTests(unittest.TestCase):
         self.tmp.cleanup()
 
     def test_lifecycle_and_owner_isolation(self):
-        audit_id = site_audit.create_audit("https://x.nl/", 500, "dev:1")
+        audit_id = site_audit.create_audit("https://x.nl/", 5000, "dev:1")
         self.assertEqual(site_audit.get_audit(audit_id, "dev:1")["max_pages"], site_audit.MAX_PAGES_LIMIT)
         self.assertIsNone(site_audit.get_audit(audit_id, "dev:2"))          # someone else's audit
         self.assertIsNone(site_audit.get_audit(audit_id, "psa"))
@@ -171,6 +171,18 @@ class JobTests(unittest.TestCase):
         site_audit._finish(audit_id, {"score": 77}, None)
         done = site_audit.get_audit(audit_id, "dev:1")
         self.assertEqual((done["status"], done["result"]["score"]), ("done", 77))
+
+    def test_fast_lane_skips_big_audits(self):
+        big = site_audit.create_audit("https://groot.nl/", 500, "psa")
+        small = site_audit.create_audit("https://klein.nl/", 50, "psa")
+        self.assertEqual(site_audit._claim_audit(site_audit.SMALL_AUDIT_PAGES)["id"], small)   # fast lane: not the big one
+        self.assertIsNone(site_audit._claim_audit(site_audit.SMALL_AUDIT_PAGES))
+        self.assertEqual(site_audit._claim_audit()["id"], big)                                # the other worker takes it
+
+    def test_timeout_grows_with_size(self):
+        self.assertEqual(site_audit.audit_timeout(50), 15 * 60)
+        self.assertEqual(site_audit.audit_timeout(100), 15 * 60)
+        self.assertGreaterEqual(site_audit.audit_timeout(500), 500 * 4)
 
     def test_failed_audit_keeps_reason(self):
         audit_id = site_audit.create_audit("https://x.nl/", 5, "psa")

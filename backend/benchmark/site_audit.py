@@ -4,7 +4,8 @@ missing titles/descriptions, H1 problems, thin and duplicate content, noindex, c
 sitemap problems, slow pages, alt texts, language/viewport and structured data.
 
 `build_report` is pure (no network) and holds all the rules, so it is fully unit-testable.
-Jobs live in the `site_audits` table and run in their own loop (max 2 at a time)."""
+Jobs live in the `site_audits` table and run in their own loop (max 2 at a time; one worker only
+takes small audits, so a big one never makes a quick audit wait behind it)."""
 
 from __future__ import annotations
 
@@ -21,7 +22,9 @@ from urllib.parse import urljoin, urlsplit
 from backend.benchmark import rules, store, worker
 from backend.seo_geo_audit import SCAN_TOKEN, SCAN_USER_AGENT, audit_seo_geo
 
-MAX_PAGES_LIMIT = 100
+MAX_PAGES_LIMIT = 500
+SMALL_AUDIT_PAGES = 100      # the fast lane takes audits up to this size
+SECONDS_PER_PAGE = 5         # time budget per page (politeness delay + fetch + analysis)
 LINK_CHECK_LIMIT = 50          # extra checks of internal links that were not crawled
 SLOW_MS = 2000
 THIN_WORDS = 200
@@ -334,9 +337,19 @@ def audits_since(owner: str, since: datetime) -> list[str]:
     return [row["requested_at"] for row in rows]
 
 
-def _claim_audit() -> dict[str, Any] | None:
+def audit_timeout(max_pages: int) -> float:
+    """Seconds an audit may take: at least 15 minutes, more for big audits."""
+    return max(15 * 60, max_pages * SECONDS_PER_PAGE)
+
+
+def _claim_audit(max_pages: int | None = None) -> dict[str, Any] | None:
+    """The oldest queued audit (with `max_pages`: only audits up to that size)."""
     with store.connect() as conn:
-        row = conn.execute("SELECT * FROM site_audits WHERE status='queued' ORDER BY requested_at LIMIT 1").fetchone()
+        if max_pages is None:
+            row = conn.execute("SELECT * FROM site_audits WHERE status='queued' ORDER BY requested_at LIMIT 1").fetchone()
+        else:
+            row = conn.execute("SELECT * FROM site_audits WHERE status='queued' AND max_pages<=?"
+                               " ORDER BY requested_at LIMIT 1", (max_pages,)).fetchone()
         if row is None:
             return None
         conn.execute("UPDATE site_audits SET status='running', started_at=? WHERE id=?", (store.now_iso(), row["id"]))
@@ -354,7 +367,7 @@ def _finish(audit_id: str, result: dict[str, Any] | None, error: str | None) -> 
 
 async def run_audit(job: dict[str, Any]) -> None:
     try:
-        result = await asyncio.wait_for(crawl_site(job["url"], job["max_pages"]), timeout=15 * 60)
+        result = await asyncio.wait_for(crawl_site(job["url"], job["max_pages"]), timeout=audit_timeout(job["max_pages"]))
         await asyncio.to_thread(_finish, job["id"], result, None)
     except ValueError as exc:
         await asyncio.to_thread(_finish, job["id"], None, str(exc))
@@ -372,13 +385,14 @@ async def run_audits_forever(stop: asyncio.Event | None = None, idle_seconds: fl
     await asyncio.to_thread(_prepare)
     lock = asyncio.Lock()
 
-    async def audit_worker() -> None:
+    async def audit_worker(max_pages: int | None) -> None:
         while not (stop and stop.is_set()):
             async with lock:
-                job = await asyncio.to_thread(_claim_audit)
+                job = await asyncio.to_thread(_claim_audit, max_pages)
             if job is None:
                 await asyncio.sleep(idle_seconds)
                 continue
             await run_audit(job)
 
-    await asyncio.gather(*(audit_worker() for _ in range(CONCURRENT_AUDITS)))
+    # worker 0 takes any audit, the others only small ones (fast lane)
+    await asyncio.gather(*(audit_worker(None if i == 0 else SMALL_AUDIT_PAGES) for i in range(CONCURRENT_AUDITS)))
